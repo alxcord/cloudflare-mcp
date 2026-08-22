@@ -10,7 +10,7 @@ automações e qualquer ferramenta que fale HTTP.
 - API REST: `https://mcp-memoria.<seu-dominio>/api/*` (autenticada por **Bearer token estático**)
 - Código: [`worker.js`](./worker.js)
 - Config do Worker: [`wrangler.toml`](./wrangler.toml)
-- Storage: Cloudflare D1 (binding `DB`, banco `mcp-memoria-db`)
+- Storage: Cloudflare D1 (binding `DB`, banco `memoria-db`)
 
 ## O que ele faz
 
@@ -75,16 +75,16 @@ no código deste repositório.
 Execute no terminal (requer Wrangler instalado e autenticado):
 
 ```bash
-wrangler d1 create mcp-memoria-db
+wrangler d1 create memoria-db
 ```
 
 A saída vai conter algo como:
 
 ```
-✅ Successfully created DB 'mcp-memoria-db'
+✅ Successfully created DB 'memoria-db'
 [[d1_databases]]
 binding = "DB"
-database_name = "mcp-memoria-db"
+database_name = "memoria-db"
 database_id = "xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
 ```
 
