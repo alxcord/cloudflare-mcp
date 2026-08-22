@@ -22,7 +22,7 @@ usando as credenciais certas.
 
 ## Ideia geral / arquitetura
 
-- Cada serviço (GitHub, e no futuro outros — Wger, etc.) vira **um Worker separado**, com seu
+- Cada serviço (GitHub, Wger, e no futuro outros) vira **um Worker separado**, com seu
   próprio subdomínio: `mcp-<servico>.alexcordeiro.dev`.
 - Cada Worker é **um arquivo único de JavaScript**, sem build step, sem dependências de npm.
   Só usa `fetch` nativo do runtime do Workers. Isso mantém o deploy simples e o código fácil de
@@ -44,7 +44,7 @@ Claude (custom connector)
 Cloudflare Worker (mcp-<servico>.alexcordeiro.dev)
    │  usa secret PAT/API key do Worker
    ▼
-API do serviço (GitHub, etc.)
+API do serviço (GitHub, Wger, etc.)
 ```
 
 ## Estrutura do repositório
@@ -54,7 +54,11 @@ Cada Worker mora na sua própria subpasta, com seu próprio `wrangler.toml`:
 ```
 cloudflare-mcp/
 ├── README.md          ← este arquivo (visão geral)
-└── git/                ← MCP do GitHub — ver git/README.md
+├── git/                ← MCP do GitHub — ver git/README.md
+│   ├── README.md
+│   ├── wrangler.toml
+│   └── worker.js
+└── wger/               ← MCP do Wger — ver wger/README.md
     ├── README.md
     ├── wrangler.toml
     └── worker.js
@@ -76,6 +80,7 @@ inicial.
 | Pasta | Worker | Domínio | O que faz |
 |---|---|---|---|
 | [`git/`](./git) | `mcp-git` | `mcp-git.alexcordeiro.dev` | Leitura e escrita em repositórios do GitHub (arquivos, commits) |
+| [`wger/`](./wger) | `mcp-wger` | `mcp-wger.alexcordeiro.dev` | Leitura e escrita na API do Wger (wger.de) — treino, peso, nutrição |
 
 Detalhes de cada um, incluindo passo a passo de configuração, estão no `README.md` da respectiva
 pasta.
