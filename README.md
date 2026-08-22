@@ -79,7 +79,7 @@ inicial.
 
 | Pasta | Worker | Domínio | O que faz |
 |---|---|---|---|
-| [`git/`](./git) | `mcp-git` | `mcp-git.<seu-dominio>` | Leitura e escrita em repositórios do GitHub (arquivos, commits) |
+| [`git/`](./git) | `mcp-git` | `mcp-git.<seu-dominio>` | Leitura e escrita em repositórios do GitHub (arquivos, commits, branches e pull requests) |
 | [`wger/`](./wger) | `mcp-wger` | `mcp-wger.<seu-dominio>` | Leitura e escrita na API do Wger (wger.de) — treino, peso, nutrição |
 
 Detalhes de cada um, incluindo passo a passo de configuração, estão no `README.md` da respectiva
@@ -90,7 +90,8 @@ pasta.
 - Nenhum token ou segredo é digitado por IA em campo nenhum — quem cola as credenciais é sempre
   a pessoa dona da conta.
 - PATs do GitHub são **fine-grained**, escopados ao mínimo necessário (`Contents: Read and
-  write`), nunca *classic tokens* com acesso total.
+  write` e, para o fluxo de PRs, `Pull requests: Read and write`), nunca *classic tokens* com
+  acesso total.
 - Secrets do Worker são sempre marcados como `Secret` (criptografado), nunca `Plaintext`.
 - Toda ferramenta exposta ao Claude fica configurada como **"Requer aprovação"** no conector,
   então nada roda sem confirmação explícita antes de cada chamada.

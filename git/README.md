@@ -18,8 +18,10 @@ sem build.
 ## O que ele faz
 
 Implementa o protocolo MCP (JSON-RPC 2.0 sobre HTTP — `initialize`, `tools/list`, `tools/call`)
-e expõe 6 ferramentas que chamam a API REST do GitHub usando um Personal Access Token guardado
-como secret do Worker:
+e expõe 17 ferramentas que chamam a API REST do GitHub usando um Personal Access Token guardado
+como secret do Worker.
+
+### Arquivos e commits
 
 | Ferramenta | O que faz |
 |---|---|
@@ -30,6 +32,27 @@ como secret do Worker:
 | `push_files` | Cria ou atualiza vários arquivos em um único commit (usa a Git Trees API) |
 | `delete_file` | Apaga um arquivo |
 
+### Branches
+
+| Ferramenta | O que faz |
+|---|---|
+| `list_branches` | Lista as branches, com SHA do último commit e marcação de qual é a default |
+| `create_branch` | Cria uma branch a partir de outra branch ou de um SHA (padrão: a branch default) |
+| `delete_branch` | Apaga uma branch remota — recusa apagar a branch default |
+
+### Pull requests
+
+| Ferramenta | O que faz |
+|---|---|
+| `list_pull_requests` | Lista PRs abertos, fechados ou todos, com filtro por `base`/`head` |
+| `get_pull_request` | Detalhes de um PR: descrição, estado, `mergeable`, arquivos alterados |
+| `get_pull_request_diff` | Diff unificado do PR, truncado em 60.000 caracteres por padrão |
+| `create_pull_request` | Abre um PR (aceita `draft`; `base` padrão é a branch default) |
+| `update_pull_request` | Altera título, descrição, branch base ou estado (`open`/`closed`) |
+| `merge_pull_request` | Faz o merge — método `merge`, `squash` (padrão) ou `rebase` |
+| `comment_pull_request` | Comentário geral na conversa do PR |
+| `review_pull_request` | Revisão formal: `COMMENT`, `APPROVE` ou `REQUEST_CHANGES`, com comentários em linhas específicas do diff |
+
 Todas as ferramentas recebem `owner` e `repo` como parâmetros — não é um MCP amarrado a um
 repositório específico, funciona com qualquer repositório que o token tenha permissão de acessar.
 
@@ -37,6 +60,19 @@ Diferente do `mcp-wger` (que expõe ferramentas genéricas de REST — `api_get`
 aqui cada operação tem sua própria ferramenta: a parte da API do GitHub usada é pequena, estável
 e bem conhecida, e algumas operações não são uma chamada só (o `push_files` orquestra cinco
 chamadas encadeadas da Git Trees API para caber tudo em um commit).
+
+## Fluxo típico com branch e PR
+
+As ferramentas de escrita em arquivo (`write_file`, `push_files`, `delete_file`) aceitam o
+parâmetro `branch`, então o ciclo completo é feito só com este MCP:
+
+1. `create_branch` — cria `feat/alguma-coisa` a partir da branch default.
+2. `push_files` com `branch: 'feat/alguma-coisa'` — commita as mudanças **na branch nova**.
+   Sem passar `branch` explicitamente, o padrão continua sendo `main` e o commit vai direto pra
+   linha principal.
+3. `create_pull_request` com `head: 'feat/alguma-coisa'` — abre o PR.
+4. `get_pull_request_diff` — revisa o que mudou de fato.
+5. `merge_pull_request` e depois `delete_branch` — fecha o ciclo.
 
 ## Autenticação
 
@@ -99,8 +135,15 @@ porque o `PAT` que ele guarda dá escrita em **todos** os repositórios da conta
 
 ### Sobre o PAT do GitHub
 
-O secret `PAT` não mudou na migração para OAuth — continua sendo o mesmo fine-grained token, com
-`Contents: Read and write`. Se ele vazar, a forma de invalidar é revogar o token em
+O secret `PAT` é um fine-grained token, com as permissões de repositório:
+
+| Permissão | Nível | Para quê |
+|---|---|---|
+| `Metadata` | Read-only | Obrigatória, marcada automaticamente |
+| `Contents` | Read and write | Arquivos, commits e branches (a Git Refs API cai neste escopo) |
+| `Pull requests` | Read and write | Abrir, atualizar, comentar, revisar e mergear PRs |
+
+Se o token vazar, a forma de invalidar é revogá-lo em
 [github.com/settings/personal-access-tokens](https://github.com/settings/personal-access-tokens)
 e gerar outro; trocar o `MCP_SECRET` corta o acesso do Claude ao Worker, mas não invalida o PAT.
 
@@ -116,9 +159,16 @@ e gerar outro; trocar o `MCP_SECRET` corta o acesso do Claude ao Worker, mas nã
    - `Only select repositories` e selecione só os repositórios que esse MCP vai precisar, **ou**
    - `All repositories`, se o MCP precisa escrever em vários repos (ex: site pessoal + vault do
      Obsidian).
-5. Em **Permissions > Repository permissions**, defina `Contents: Read and write`.
-   `Metadata: Read-only` é marcado automaticamente (obrigatório).
+5. Em **Permissions > Repository permissions**, defina `Contents: Read and write` e
+   `Pull requests: Read and write`. `Metadata: Read-only` é marcado automaticamente
+   (obrigatório).
 6. Clique em **Generate token** e copie o valor imediatamente — o GitHub só mostra uma vez.
+
+> Para adicionar a permissão de Pull requests a um token que **já existe**, não é preciso gerar
+> outro: abra o token em
+> [github.com/settings/personal-access-tokens](https://github.com/settings/personal-access-tokens),
+> marque a permissão nova e salve. O valor do token não muda, então o secret `PAT` no Cloudflare
+> continua válido.
 
 ### 2. Criar o Worker no Cloudflare
 
@@ -204,14 +254,17 @@ POST https://mcp-git.<seu-dominio>/<MCP_SECRET>/mcp
 5. Clique em **Adicionar** e depois em **Vincular**. Isso abre `/authorize` — cole o
    `MCP_SECRET` configurado no passo 4 e clique em **Aprovar**. O Claude troca o código pelo
    access token automaticamente nos bastidores.
-6. Depois de vinculado, em **Permissões de ferramentas**, todas as 6 ferramentas vêm com
+6. Depois de vinculado, em **Permissões de ferramentas**, todas as ferramentas vêm com
    **"Requer aprovação"** por padrão — nada executa sem confirmação manual antes de cada chamada.
+   Vale conferir que as ferramentas destrutivas (`delete_file`, `delete_branch`,
+   `merge_pull_request`) estão nesse modo.
 
 ### 8. Validar
 
 Peça pro Claude chamar a ferramenta `whoami`. Deve retornar o `login`, `name` e `id` da conta do
 GitHub dona do token — confirmando que a cadeia completa (Claude → OAuth → Worker → GitHub) está
-funcionando.
+funcionando. Para validar o bloco de PRs, `list_pull_requests` em qualquer repo é o teste mais
+barato: se o PAT estiver sem a permissão de Pull requests, ele responde `403`.
 
 ## Atualizando o código
 
@@ -219,20 +272,37 @@ Basta editar `worker.js` (e/ou `wrangler.toml`) neste repositório e dar push na
 Cloudflare Workers Builds detecta o commit, builda e faz o deploy automaticamente — sem precisar
 colar código manualmente no editor do painel.
 
+Depois que o deploy sobe com ferramentas novas, o Claude **não** as enxerga automaticamente na
+sessão em andamento: a lista de ferramentas é lida no `tools/list` do handshake. É preciso
+recarregar a conexão (desligar e religar o conector, ou abrir uma conversa nova) para as
+ferramentas novas aparecerem.
+
 **Cuidado com a auto-referência**: como é o próprio `mcp-git` que costuma escrever neste repo,
 qualquer mudança que quebre a autenticação deste Worker derruba, no mesmo deploy, a ferramenta
 que estava fazendo a mudança. Foi o que aconteceu na migração para OAuth: o commit precisou sair
 inteiro de uma vez (`push_files`), e o conector só voltou a funcionar depois de reconfigurado à
 mão no claude.ai. Mudanças assim exigem revisão antes do push, porque não dá para testar o
-endpoint novo sem já ter desligado o antigo.
+endpoint novo sem já ter desligado o antigo. Um `node --check` no arquivo antes do push evita a
+classe mais boba de quebra (erro de sintaxe derrubando o build).
 
 ## Limitações conhecidas
 
 - `push_files` cria um novo commit a partir do `HEAD` da branch no momento da chamada; não
   faz merge de conflitos — se o arquivo mudou entre a leitura e a escrita, o commit pode
   sobrescrever mudanças concorrentes.
-- Não há suporte a branches protegidas, PRs ou revisão — as ferramentas escrevem direto na
-  branch indicada (`main` por padrão).
+- `write_file`, `push_files` e `delete_file` usam `main` como branch padrão quando `branch` não é
+  informado. Em um fluxo de PR, passar a branch explicitamente é obrigatório.
+- `review_pull_request` com `event: 'APPROVE'` falha com `422` quando o autor do PR é o mesmo
+  usuário do PAT — o GitHub não deixa ninguém aprovar o próprio PR. Como o PAT normalmente é da
+  mesma conta que abriu o PR, na prática só `COMMENT` funciona em PRs próprios.
+- `comment_pull_request` usa o endpoint de comentários de issue. Se ele responder `403` mesmo
+  com `Pull requests: Read and write`, adicionar `Issues: Read and write` ao PAT resolve.
+- Branches protegidas continuam protegidas: o `merge_pull_request` respeita as regras do
+  repositório (checks obrigatórios, revisão exigida) e falha com `405` se elas não forem
+  atendidas. O Worker não tem como contornar isso, nem deveria.
+- `get_pull_request_diff` trunca o diff (padrão 60.000 caracteres). PRs grandes vêm cortados —
+  aumentar `max_chars` ajuda até o limite do que cabe no contexto.
+- `create_branch` aceita branch ou SHA em `from`; tags não são resolvidas.
 - `push_files` e `write_file` mandam o conteúdo como UTF-8/base64 de texto: não servem para
   arquivos binários.
 - Access tokens não podem ser revogados individualmente antes de expirar (30 dias) — só trocando

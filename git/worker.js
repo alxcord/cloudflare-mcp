@@ -2,7 +2,8 @@
 // Arquivo unico, sem build/npm.
 //
 // Secrets necessarios (aba Settings > Variables and Secrets do Worker):
-//   PAT         - GitHub fine-grained personal access token (Contents: Read and write)
+//   PAT         - GitHub fine-grained personal access token
+//                 (Contents: Read and write + Pull requests: Read and write)
 //   MCP_SECRET  - usado como (a) senha de aprovacao na tela /authorize e (b) chave de assinatura
 //                 HMAC dos tokens OAuth emitidos por este Worker. NAO viaja mais na URL.
 //
@@ -17,15 +18,18 @@
 //   POST /mcp                                        endpoint MCP (Authorization: Bearer <token>)
 //
 // As ferramentas sao dedicadas por operacao (whoami, list_dir, read_file, write_file,
-// push_files, delete_file), diferente do mcp-wger que expoe ferramentas genericas de REST: a
-// parte da API do GitHub usada aqui e pequena, estavel e bem conhecida, entao vale a pena o
-// Worker saber exatamente o que cada operacao faz (inclusive orquestrar a Git Trees API no
-// push_files, que sao 5 chamadas encadeadas).
+// push_files, delete_file, e o bloco de branches e pull requests), diferente do mcp-wger que
+// expoe ferramentas genericas de REST: a parte da API do GitHub usada aqui e pequena, estavel e
+// bem conhecida, entao vale a pena o Worker saber exatamente o que cada operacao faz (inclusive
+// orquestrar a Git Trees API no push_files, que sao 5 chamadas encadeadas).
 
 const GITHUB_API = 'https://api.github.com';
 const ISSUER = 'https://mcp-git.alexcordeiro.dev';
 const AUTH_CODE_TTL = 60;              // segundos - codigo de autorizacao e de uso unico e rapido
 const ACCESS_TOKEN_TTL = 60 * 60 * 24 * 30; // 30 dias
+const MERGE_METHODS = ['merge', 'squash', 'rebase'];
+const REVIEW_EVENTS = ['COMMENT', 'APPROVE', 'REQUEST_CHANGES'];
+const DIFF_MAX_CHARS = 60000;          // corta diffs gigantes antes de devolver ao Claude
 
 // ---------- JSON-RPC helpers ----------
 
@@ -104,7 +108,7 @@ async function sha256B64url(str) {
   return b64urlEncode(new Uint8Array(digest));
 }
 
-// ---------- Tools (identico ao worker anterior) ----------
+// ---------- Tools ----------
 
 const TOOLS = [
   {
@@ -195,6 +199,182 @@ const TOOLS = [
       },
       required: ['owner', 'repo', 'path', 'message']
     }
+  },
+  {
+    name: 'list_branches',
+    description: 'Lista as branches de um repo do GitHub, com o SHA do ultimo commit de cada uma.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        owner: { type: 'string' },
+        repo: { type: 'string' },
+        per_page: { type: 'number', description: 'Quantas branches trazer (padrao 100, maximo 100)' }
+      },
+      required: ['owner', 'repo']
+    }
+  },
+  {
+    name: 'create_branch',
+    description: 'Cria uma nova branch em um repo do GitHub a partir de outra branch ou de um commit.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        owner: { type: 'string' },
+        repo: { type: 'string' },
+        branch: { type: 'string', description: 'Nome da branch nova' },
+        from: { type: 'string', description: 'Branch ou SHA de origem (padrao: branch default do repo)' }
+      },
+      required: ['owner', 'repo', 'branch']
+    }
+  },
+  {
+    name: 'delete_branch',
+    description: 'Apaga uma branch remota de um repo do GitHub. Nunca apaga a branch default.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        owner: { type: 'string' },
+        repo: { type: 'string' },
+        branch: { type: 'string' }
+      },
+      required: ['owner', 'repo', 'branch']
+    }
+  },
+  {
+    name: 'list_pull_requests',
+    description: 'Lista os pull requests de um repo do GitHub, abertos, fechados ou todos.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        owner: { type: 'string' },
+        repo: { type: 'string' },
+        state: { type: 'string', description: 'open, closed ou all (padrao: open)' },
+        base: { type: 'string', description: 'Filtra por branch de destino' },
+        head: { type: 'string', description: 'Filtra por branch de origem, formato owner:branch' },
+        per_page: { type: 'number', description: 'Quantos PRs trazer (padrao 30, maximo 100)' }
+      },
+      required: ['owner', 'repo']
+    }
+  },
+  {
+    name: 'get_pull_request',
+    description: 'Retorna os detalhes de um pull request: titulo, descricao, estado, branches, se da para mergear e quantos arquivos mudaram.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        owner: { type: 'string' },
+        repo: { type: 'string' },
+        number: { type: 'number', description: 'Numero do pull request' }
+      },
+      required: ['owner', 'repo', 'number']
+    }
+  },
+  {
+    name: 'get_pull_request_diff',
+    description: 'Retorna o diff unificado de um pull request, para revisar o que mudou antes de comentar, aprovar ou mergear.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        owner: { type: 'string' },
+        repo: { type: 'string' },
+        number: { type: 'number' },
+        max_chars: { type: 'number', description: 'Tamanho maximo do diff devolvido (padrao 60000)' }
+      },
+      required: ['owner', 'repo', 'number']
+    }
+  },
+  {
+    name: 'create_pull_request',
+    description: 'Abre um novo pull request em um repo do GitHub.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        owner: { type: 'string' },
+        repo: { type: 'string' },
+        title: { type: 'string' },
+        head: { type: 'string', description: 'Branch de origem, com as mudancas' },
+        base: { type: 'string', description: 'Branch de destino (padrao: branch default do repo)' },
+        body: { type: 'string', description: 'Descricao do PR' },
+        draft: { type: 'boolean', description: 'Abrir como rascunho (padrao false)' }
+      },
+      required: ['owner', 'repo', 'title', 'head']
+    }
+  },
+  {
+    name: 'update_pull_request',
+    description: 'Altera titulo, descricao, branch base ou estado (open/closed) de um pull request existente.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        owner: { type: 'string' },
+        repo: { type: 'string' },
+        number: { type: 'number' },
+        title: { type: 'string' },
+        body: { type: 'string' },
+        base: { type: 'string' },
+        state: { type: 'string', description: 'open ou closed' }
+      },
+      required: ['owner', 'repo', 'number']
+    }
+  },
+  {
+    name: 'merge_pull_request',
+    description: 'Faz o merge de um pull request. O metodo pode ser merge, squash ou rebase.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        owner: { type: 'string' },
+        repo: { type: 'string' },
+        number: { type: 'number' },
+        method: { type: 'string', description: 'merge, squash ou rebase (padrao: squash)' },
+        commit_title: { type: 'string' },
+        commit_message: { type: 'string' }
+      },
+      required: ['owner', 'repo', 'number']
+    }
+  },
+  {
+    name: 'comment_pull_request',
+    description: 'Escreve um comentario geral na conversa de um pull request.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        owner: { type: 'string' },
+        repo: { type: 'string' },
+        number: { type: 'number' },
+        body: { type: 'string' }
+      },
+      required: ['owner', 'repo', 'number', 'body']
+    }
+  },
+  {
+    name: 'review_pull_request',
+    description: 'Cria uma revisao em um pull request, com comentario geral e, se quiser, comentarios em linhas especificas do diff. O evento pode ser COMMENT, APPROVE ou REQUEST_CHANGES.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        owner: { type: 'string' },
+        repo: { type: 'string' },
+        number: { type: 'number' },
+        event: { type: 'string', description: 'COMMENT, APPROVE ou REQUEST_CHANGES (padrao: COMMENT)' },
+        body: { type: 'string', description: 'Texto geral da revisao' },
+        comments: {
+          type: 'array',
+          description: 'Comentarios em linhas especificas do diff',
+          items: {
+            type: 'object',
+            properties: {
+              path: { type: 'string', description: 'Caminho do arquivo' },
+              line: { type: 'number', description: 'Linha no arquivo depois da mudanca' },
+              body: { type: 'string' },
+              side: { type: 'string', description: 'RIGHT (padrao) ou LEFT' }
+            },
+            required: ['path', 'line', 'body']
+          }
+        }
+      },
+      required: ['owner', 'repo', 'number']
+    }
   }
 ];
 
@@ -236,6 +416,11 @@ function b64decode(b64) {
 async function getRefSha(env, owner, repo, branch) {
   const ref = await gh(env, `/repos/${owner}/${repo}/git/ref/heads/${branch}`);
   return ref.object.sha;
+}
+
+async function getDefaultBranch(env, owner, repo) {
+  const info = await gh(env, `/repos/${owner}/${repo}`);
+  return info.default_branch;
 }
 
 async function toolWhoami(env) {
@@ -329,6 +514,181 @@ async function toolPushFiles(env, args) {
   return { commit: newCommit.sha, files: files.map(f => f.path) };
 }
 
+// ---------- Branches ----------
+
+async function toolListBranches(env, args) {
+  const { owner, repo, per_page = 100 } = args;
+  const limit = Math.min(Math.max(Number(per_page) || 100, 1), 100);
+  const data = await gh(env, `/repos/${owner}/${repo}/branches?per_page=${limit}`);
+  const def = await getDefaultBranch(env, owner, repo);
+  return data.map(b => ({
+    name: b.name,
+    sha: b.commit && b.commit.sha,
+    protected: b.protected,
+    default: b.name === def
+  }));
+}
+
+async function toolCreateBranch(env, args) {
+  const { owner, repo, branch, from } = args;
+  const source = from || await getDefaultBranch(env, owner, repo);
+  let sha;
+  try {
+    sha = await getRefSha(env, owner, repo, source);
+  } catch (e) {
+    // 'from' pode ter vindo como SHA de commit em vez de nome de branch
+    sha = source;
+  }
+  const ref = await gh(env, `/repos/${owner}/${repo}/git/refs`, {
+    method: 'POST',
+    body: JSON.stringify({ ref: `refs/heads/${branch}`, sha })
+  });
+  return { branch, from: source, sha: ref.object.sha };
+}
+
+async function toolDeleteBranch(env, args) {
+  const { owner, repo, branch } = args;
+  const def = await getDefaultBranch(env, owner, repo);
+  if (branch === def) {
+    throw new Error(`${branch} e a branch default de ${owner}/${repo} e nao pode ser apagada`);
+  }
+  await gh(env, `/repos/${owner}/${repo}/git/refs/heads/${branch}`, { method: 'DELETE' });
+  return { branch, deleted: true };
+}
+
+// ---------- Pull requests ----------
+
+function summarizePr(pr) {
+  return {
+    number: pr.number,
+    title: pr.title,
+    state: pr.state,
+    draft: pr.draft,
+    head: pr.head && pr.head.ref,
+    base: pr.base && pr.base.ref,
+    author: pr.user && pr.user.login,
+    url: pr.html_url
+  };
+}
+
+async function toolListPullRequests(env, args) {
+  const { owner, repo, state = 'open', base, head, per_page = 30 } = args;
+  const limit = Math.min(Math.max(Number(per_page) || 30, 1), 100);
+  const q = new URLSearchParams({ state, per_page: String(limit) });
+  if (base) q.set('base', base);
+  if (head) q.set('head', head);
+  const data = await gh(env, `/repos/${owner}/${repo}/pulls?${q.toString()}`);
+  return data.map(summarizePr);
+}
+
+async function toolGetPullRequest(env, args) {
+  const { owner, repo, number } = args;
+  const pr = await gh(env, `/repos/${owner}/${repo}/pulls/${number}`);
+  return {
+    ...summarizePr(pr),
+    body: pr.body,
+    merged: pr.merged,
+    mergeable: pr.mergeable,
+    mergeable_state: pr.mergeable_state,
+    changed_files: pr.changed_files,
+    additions: pr.additions,
+    deletions: pr.deletions
+  };
+}
+
+async function toolGetPullRequestDiff(env, args) {
+  const { owner, repo, number, max_chars = DIFF_MAX_CHARS } = args;
+  const limit = Math.max(Number(max_chars) || DIFF_MAX_CHARS, 1000);
+  const raw = await gh(env, `/repos/${owner}/${repo}/pulls/${number}`, {
+    headers: { 'Accept': 'application/vnd.github.v3.diff' }
+  });
+  const text = typeof raw === 'string' ? raw : JSON.stringify(raw);
+  if (text.length > limit) {
+    return { number, truncated: true, diff: `${text.slice(0, limit)}\n... [diff truncado em ${limit} caracteres]` };
+  }
+  return { number, truncated: false, diff: text };
+}
+
+async function toolCreatePullRequest(env, args) {
+  const { owner, repo, title, head, base, body, draft = false } = args;
+  const target = base || await getDefaultBranch(env, owner, repo);
+  const pr = await gh(env, `/repos/${owner}/${repo}/pulls`, {
+    method: 'POST',
+    body: JSON.stringify({ title, head, base: target, draft, ...(body ? { body } : {}) })
+  });
+  return summarizePr(pr);
+}
+
+async function toolUpdatePullRequest(env, args) {
+  const { owner, repo, number, title, body, base, state } = args;
+  const patch = {};
+  if (title !== undefined) patch.title = title;
+  if (body !== undefined) patch.body = body;
+  if (base !== undefined) patch.base = base;
+  if (state !== undefined) {
+    if (state !== 'open' && state !== 'closed') throw new Error(`Estado invalido: ${state}. Use open ou closed.`);
+    patch.state = state;
+  }
+  if (Object.keys(patch).length === 0) {
+    throw new Error('Nada para atualizar: informe title, body, base ou state');
+  }
+  const pr = await gh(env, `/repos/${owner}/${repo}/pulls/${number}`, {
+    method: 'PATCH',
+    body: JSON.stringify(patch)
+  });
+  return summarizePr(pr);
+}
+
+async function toolMergePullRequest(env, args) {
+  const { owner, repo, number, method = 'squash', commit_title, commit_message } = args;
+  if (!MERGE_METHODS.includes(method)) {
+    throw new Error(`Metodo de merge invalido: ${method}. Use ${MERGE_METHODS.join(', ')}.`);
+  }
+  const data = await gh(env, `/repos/${owner}/${repo}/pulls/${number}/merge`, {
+    method: 'PUT',
+    body: JSON.stringify({
+      merge_method: method,
+      ...(commit_title ? { commit_title } : {}),
+      ...(commit_message ? { commit_message } : {})
+    })
+  });
+  return { number, merged: data.merged, sha: data.sha, message: data.message };
+}
+
+async function toolCommentPullRequest(env, args) {
+  const { owner, repo, number, body } = args;
+  const c = await gh(env, `/repos/${owner}/${repo}/issues/${number}/comments`, {
+    method: 'POST',
+    body: JSON.stringify({ body })
+  });
+  return { id: c.id, url: c.html_url };
+}
+
+async function toolReviewPullRequest(env, args) {
+  const { owner, repo, number, event = 'COMMENT', body, comments } = args;
+  if (!REVIEW_EVENTS.includes(event)) {
+    throw new Error(`Evento de revisao invalido: ${event}. Use ${REVIEW_EVENTS.join(', ')}.`);
+  }
+  const hasComments = Array.isArray(comments) && comments.length > 0;
+  if ((event === 'COMMENT' || event === 'REQUEST_CHANGES') && !body && !hasComments) {
+    throw new Error(`O evento ${event} exige um texto em body ou pelo menos um comentario em comments.`);
+  }
+  const payload = { event, ...(body ? { body } : {}) };
+  if (hasComments) {
+    payload.comments = comments.map(c => ({
+      path: c.path,
+      line: c.line,
+      body: c.body,
+      ...(c.side ? { side: c.side } : {})
+    }));
+  }
+  const review = await gh(env, `/repos/${owner}/${repo}/pulls/${number}/reviews`, {
+    method: 'POST',
+    body: JSON.stringify(payload)
+  });
+  return { id: review.id, state: review.state, url: review.html_url };
+}
+
 async function callTool(env, name, args) {
   switch (name) {
     case 'whoami': return toolWhoami(env);
@@ -337,6 +697,17 @@ async function callTool(env, name, args) {
     case 'write_file': return toolWriteFile(env, args);
     case 'delete_file': return toolDeleteFile(env, args);
     case 'push_files': return toolPushFiles(env, args);
+    case 'list_branches': return toolListBranches(env, args);
+    case 'create_branch': return toolCreateBranch(env, args);
+    case 'delete_branch': return toolDeleteBranch(env, args);
+    case 'list_pull_requests': return toolListPullRequests(env, args);
+    case 'get_pull_request': return toolGetPullRequest(env, args);
+    case 'get_pull_request_diff': return toolGetPullRequestDiff(env, args);
+    case 'create_pull_request': return toolCreatePullRequest(env, args);
+    case 'update_pull_request': return toolUpdatePullRequest(env, args);
+    case 'merge_pull_request': return toolMergePullRequest(env, args);
+    case 'comment_pull_request': return toolCommentPullRequest(env, args);
+    case 'review_pull_request': return toolReviewPullRequest(env, args);
     default: throw new Error(`Ferramenta desconhecida: ${name}`);
   }
 }
@@ -350,7 +721,7 @@ async function handleRpc(env, body) {
     return jsonRpcResult(id, {
       protocolVersion: '2024-11-05',
       capabilities: { tools: {} },
-      serverInfo: { name: 'alexcordeiro-github-mcp', version: '2.0.0' }
+      serverInfo: { name: 'alexcordeiro-github-mcp', version: '2.1.0' }
     });
   }
   if (method === 'notifications/initialized') {
