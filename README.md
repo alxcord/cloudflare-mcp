@@ -23,11 +23,11 @@ usando as credenciais certas.
 ## Ideia geral / arquitetura
 
 - Cada serviço (GitHub, Wger, e no futuro outros) vira **um Worker separado**, com seu
-  próprio subdomínio: `mcp-<servico>.alexcordeiro.dev`.
+  próprio subdomínio: `mcp-<servico>.<seu-dominio>`.
 - Cada Worker é **um arquivo único de JavaScript**, sem build step, sem dependências de npm.
   Só usa `fetch` nativo do runtime do Workers. Isso mantém o deploy simples e o código fácil de
   auditar.
-- Autenticação é feita por um **segredo na própria URL**: `https://mcp-<servico>.alexcordeiro.dev/<MCP_SECRET>/mcp`.
+- Autenticação é feita por um **segredo na própria URL**: `https://mcp-<servico>.<seu-dominio>/<MCP_SECRET>/mcp`.
   Sem esse segredo no path, o Worker responde `401 Unauthorized`. É um esquema simples porque o
   custom connector do Claude não suporta headers customizados — então o segredo tem que viajar
   na URL.
@@ -41,7 +41,7 @@ usando as credenciais certas.
 Claude (custom connector)
    │  HTTPS POST /<MCP_SECRET>/mcp  (JSON-RPC)
    ▼
-Cloudflare Worker (mcp-<servico>.alexcordeiro.dev)
+Cloudflare Worker (mcp-<servico>.<seu-dominio>)
    │  usa secret PAT/API key do Worker
    ▼
 API do serviço (GitHub, Wger, etc.)
@@ -79,8 +79,8 @@ inicial.
 
 | Pasta | Worker | Domínio | O que faz |
 |---|---|---|---|
-| [`git/`](./git) | `mcp-git` | `mcp-git.alexcordeiro.dev` | Leitura e escrita em repositórios do GitHub (arquivos, commits) |
-| [`wger/`](./wger) | `mcp-wger` | `mcp-wger.alexcordeiro.dev` | Leitura e escrita na API do Wger (wger.de) — treino, peso, nutrição |
+| [`git/`](./git) | `mcp-git` | `mcp-git.<seu-dominio>` | Leitura e escrita em repositórios do GitHub (arquivos, commits) |
+| [`wger/`](./wger) | `mcp-wger` | `mcp-wger.<seu-dominio>` | Leitura e escrita na API do Wger (wger.de) — treino, peso, nutrição |
 
 Detalhes de cada um, incluindo passo a passo de configuração, estão no `README.md` da respectiva
 pasta.
@@ -94,3 +94,5 @@ pasta.
 - Secrets do Worker são sempre marcados como `Secret` (criptografado), nunca `Plaintext`.
 - Toda ferramenta exposta ao Claude fica configurada como **"Requer aprovação"** no conector,
   então nada roda sem confirmação explícita antes de cada chamada.
+- O domínio real usado nos Workers não é citado nesta documentação — cada instalação usa o
+  próprio domínio do dono da conta Cloudflare.

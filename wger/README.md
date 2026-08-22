@@ -5,8 +5,8 @@ usando a instância pública `wger.de`. Roda como Cloudflare Worker, arquivo ún
 mesmo padrão do [`mcp-git`](../git).
 
 - Worker: `mcp-wger`
-- Domínio: `https://mcp-wger.alexcordeiro.dev`
-- Rota MCP: `https://mcp-wger.alexcordeiro.dev/<MCP_SECRET>/mcp`
+- Domínio: `https://mcp-wger.<seu-dominio>`
+- Rota MCP: `https://mcp-wger.<seu-dominio>/<MCP_SECRET>/mcp`
 - Código: [`worker.js`](./worker.js)
 - Config do Worker: [`wrangler.toml`](./wrangler.toml)
 - Instância Wger: `https://wger.de` (nuvem pública, API `https://wger.de/api/v2/`)
@@ -104,23 +104,23 @@ ali. Se vazar, a única forma de invalidar é gerar um novo token nas configura�
 ### 5. Apontar um domínio próprio
 
 1. Em **Settings > Domains & Routes > Add > Domain**.
-2. Escolha a zona `alexcordeiro.dev` e defina o subdomínio `mcp-wger`.
+2. Escolha a mesma zona usada no `mcp-git` e defina o subdomínio `mcp-wger`.
 3. O Cloudflare emite certificado SSL automaticamente. Em poucos minutos o Worker responde em
-   `https://mcp-wger.alexcordeiro.dev`.
+   `https://mcp-wger.<seu-dominio>`.
 
 ### 6. Testar antes de conectar ao Claude
 
 Sem o secret certo, a rota deve responder `401 Unauthorized`:
 
 ```
-GET https://mcp-wger.alexcordeiro.dev/secret-errado/mcp
+GET https://mcp-wger.<seu-dominio>/secret-errado/mcp
 → Unauthorized
 ```
 
 Com o secret certo mas sem ser um POST, deve responder `405 Method not allowed`:
 
 ```
-GET https://mcp-wger.alexcordeiro.dev/<MCP_SECRET>/mcp
+GET https://mcp-wger.<seu-dominio>/<MCP_SECRET>/mcp
 → Method not allowed
 ```
 
@@ -128,10 +128,12 @@ GET https://mcp-wger.alexcordeiro.dev/<MCP_SECRET>/mcp
 
 1. Em [claude.ai/settings/connectors](https://claude.ai/settings/connectors), clique em
    **Adicionar > Adicionar conector personalizado**.
-2. **Nome**: algo identificável (ex: `MCP Wger (alexcordeiro.dev)`).
-3. **URL do servidor MCP remoto**: `https://mcp-wger.alexcordeiro.dev/<MCP_SECRET>/mcp` — troque
-   `<MCP_SECRET>` pelo valor real configurado no passo 4. **Confira visualmente antes de colar**
-   que o campo não foi preenchido com outra coisa.
+2. **Nome**: algo identificável só para você (ex: `MCP Wger`) — não é preciso incluir o domínio
+   no nome do conector.
+3. **URL do servidor MCP remoto**: `https://mcp-wger.<seu-dominio>/<MCP_SECRET>/mcp` — troque
+   `<seu-dominio>` pelo domínio configurado no passo 5 e `<MCP_SECRET>` pelo valor real
+   configurado no passo 4. **Confira visualmente antes de colar** que o campo não foi preenchido
+   com outra coisa.
 4. Deixe **OAuth Client ID/Secret** vazios (não usamos OAuth, a autenticação é via URL).
 5. Clique em **Adicionar** e depois em **Vincular**.
 6. Se aparecer erro ao vincular, o mais comum é o secret da URL não bater com o `MCP_SECRET`

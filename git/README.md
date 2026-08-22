@@ -5,8 +5,8 @@ a limitação do conector oficial (que é só leitura). Roda como Cloudflare Wor
 sem build.
 
 - Worker: `mcp-git`
-- Domínio: `https://mcp-git.alexcordeiro.dev`
-- Rota MCP: `https://mcp-git.alexcordeiro.dev/<MCP_SECRET>/mcp`
+- Domínio: `https://mcp-git.<seu-dominio>`
+- Rota MCP: `https://mcp-git.<seu-dominio>/<MCP_SECRET>/mcp`
 - Código: [`worker.js`](./worker.js)
 - Config do Worker: [`wrangler.toml`](./wrangler.toml)
 
@@ -94,16 +94,16 @@ código deste repositório.
 ### 5. Apontar um domínio próprio (opcional, mas recomendado)
 
 1. Em **Settings > Domains & Routes > Add > Domain**.
-2. Escolha a zona (ex: `alexcordeiro.dev`) e defina o subdomínio (ex: `mcp-git`).
+2. Escolha uma zona sua no Cloudflare e defina o subdomínio (ex: `mcp-git`).
 3. O Cloudflare emite certificado SSL automaticamente. Em poucos minutos o Worker responde em
-   `https://mcp-git.alexcordeiro.dev`.
+   `https://mcp-git.<seu-dominio>`.
 
 ### 6. Testar antes de conectar ao Claude
 
 Sem o secret certo, a rota deve responder `401 Unauthorized`:
 
 ```
-GET https://mcp-git.alexcordeiro.dev/secret-errado/mcp
+GET https://mcp-git.<seu-dominio>/secret-errado/mcp
 → Unauthorized
 ```
 
@@ -111,7 +111,7 @@ Com o secret certo mas sem ser um POST, deve responder `405 Method not allowed` 
 o secret bateu e passou da checagem de autenticação):
 
 ```
-GET https://mcp-git.alexcordeiro.dev/<MCP_SECRET>/mcp
+GET https://mcp-git.<seu-dominio>/<MCP_SECRET>/mcp
 → Method not allowed
 ```
 
@@ -119,12 +119,13 @@ GET https://mcp-git.alexcordeiro.dev/<MCP_SECRET>/mcp
 
 1. Em [claude.ai/settings/connectors](https://claude.ai/settings/connectors), clique em
    **Adicionar > Adicionar conector personalizado**.
-2. **Nome**: algo identificável (ex: `MCP Git (alexcordeiro.dev)`).
-3. **URL do servidor MCP remoto**: `https://mcp-git.alexcordeiro.dev/<MCP_SECRET>/mcp` — troque
-   `<MCP_SECRET>` pelo valor real configurado no passo 4. **Confira visualmente antes de colar**
-   que o campo não foi preenchido com outra coisa (ex: um gerenciador de senhas às vezes cola uma
-   referência interna em vez do texto puro — o campo deve ter só a URL, nada de
-   `data:application/...`).
+2. **Nome**: algo identificável só para você (ex: `MCP Git`) — não é preciso incluir o domínio
+   no nome do conector.
+3. **URL do servidor MCP remoto**: `https://mcp-git.<seu-dominio>/<MCP_SECRET>/mcp` — troque
+   `<seu-dominio>` pelo domínio configurado no passo 5 e `<MCP_SECRET>` pelo valor real
+   configurado no passo 4. **Confira visualmente antes de colar** que o campo não foi preenchido
+   com outra coisa (ex: um gerenciador de senhas às vezes cola uma referência interna em vez do
+   texto puro — o campo deve ter só a URL, nada de `data:application/...`).
 4. Deixe **OAuth Client ID/Secret** vazios (não usamos OAuth, a autenticação é via URL).
 5. Clique em **Adicionar** e depois em **Vincular**.
 6. Se aparecer erro ao vincular, o mais comum é o secret da URL não bater com o `MCP_SECRET`
