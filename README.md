@@ -16,35 +16,31 @@ não permitem mandar headers customizados (tipo `Authorization: Bearer <token>`)
 para simplesmente apontar para a API do GitHub direto com um Personal Access Token.
 
 A saída: um Worker próprio no Cloudflare que funciona como uma ponte. Ele guarda o token de
-verdade como *secret* do lado do servidor, expõe uma URL MCP simples (`/<segredo>/mcp`) que o
-Claude acessa sem precisar de headers especiais, e por dentro conversa com a API de cada serviço
-usando as credenciais certas.
+verdade como *secret* do lado do servidor, expõe uma URL MCP simples que o Claude acessa sem
+precisar de headers especiais, e por dentro conversa com a API de cada serviço usando as
+credenciais certas.
 
 ## Ideia geral / arquitetura
 
-- Cada serviço (GitHub, Wger, e no futuro outros) vira **um Worker separado**, com seu
+- Cada serviço (GitHub, Wger, Memória, e no futuro outros) vira **um Worker separado**, com seu
   próprio subdomínio: `mcp-<servico>.<seu-dominio>`.
 - Cada Worker é **um arquivo único de JavaScript**, sem build step, sem dependências de npm.
   Só usa `fetch` nativo do runtime do Workers. Isso mantém o deploy simples e o código fácil de
   auditar.
-- Autenticação é feita por um **segredo na própria URL**: `https://mcp-<servico>.<seu-dominio>/<MCP_SECRET>/mcp`.
-  Sem esse segredo no path, o Worker responde `401 Unauthorized`. É um esquema simples porque o
-  custom connector do Claude não suporta headers customizados — então o segredo tem que viajar
-  na URL.
-- As credenciais de verdade (tokens de API de cada serviço) ficam como **secrets do Worker no
-  Cloudflare** (`Settings > Variables and Secrets`, tipo `Secret`, nunca `Plaintext`). Elas nunca
-  aparecem no código nem no repositório.
+- Autenticação é feita por **OAuth 2.1 com PKCE** (padrão do `mcp-wger` e `mcp-memoria`) ou por
+  **segredo na URL** (padrão legado do `mcp-git`). Em ambos os casos, as credenciais de acesso
+  aos serviços externos ficam como **secrets do Worker no Cloudflare** — nunca no código.
 - Cada Worker implementa o protocolo MCP (JSON-RPC 2.0 sobre HTTP) na mão: `initialize`,
-  `tools/list` e `tools/call`. Não usa nenhum SDK — é só o suficiente pra falar com o Claude.
+  `tools/list` e `tools/call`. Não usa nenhum SDK.
 
 ```
 Claude (custom connector)
-   │  HTTPS POST /<MCP_SECRET>/mcp  (JSON-RPC)
+   │  HTTPS POST /mcp  (JSON-RPC, Bearer JWT)
    ▼
 Cloudflare Worker (mcp-<servico>.<seu-dominio>)
-   │  usa secret PAT/API key do Worker
+   │  usa secret PAT/API key/D1 binding
    ▼
-API do serviço (GitHub, Wger, etc.)
+API do serviço ou banco de dados (GitHub, Wger, D1, etc.)
 ```
 
 ## Estrutura do repositório
@@ -53,12 +49,16 @@ Cada Worker mora na sua própria subpasta, com seu próprio `wrangler.toml`:
 
 ```
 cloudflare-mcp/
-├── README.md          ← este arquivo (visão geral)
+├── README.md           ← este arquivo (visão geral)
 ├── git/                ← MCP do GitHub — ver git/README.md
 │   ├── README.md
 │   ├── wrangler.toml
 │   └── worker.js
-└── wger/               ← MCP do Wger — ver wger/README.md
+├── wger/               ← MCP do Wger — ver wger/README.md
+│   ├── README.md
+│   ├── wrangler.toml
+│   └── worker.js
+└── memoria/            ← MCP de memória em grafo (D1) — ver memoria/README.md
     ├── README.md
     ├── wrangler.toml
     └── worker.js
@@ -81,6 +81,7 @@ inicial.
 |---|---|---|---|
 | [`git/`](./git) | `mcp-git` | `mcp-git.<seu-dominio>` | Leitura e escrita em repositórios do GitHub (arquivos, commits, branches e pull requests) |
 | [`wger/`](./wger) | `mcp-wger` | `mcp-wger.<seu-dominio>` | Leitura e escrita na API do Wger (wger.de) — treino, peso, nutrição |
+| [`memoria/`](./memoria) | `mcp-memoria` | `mcp-memoria.<seu-dominio>` | Grafo de memória pessoal persistido em Cloudflare D1 — ferramentas MCP + API REST |
 
 Detalhes de cada um, incluindo passo a passo de configuração, estão no `README.md` da respectiva
 pasta.
@@ -89,9 +90,7 @@ pasta.
 
 - Nenhum token ou segredo é digitado por IA em campo nenhum — quem cola as credenciais é sempre
   a pessoa dona da conta.
-- PATs do GitHub são **fine-grained**, escopados ao mínimo necessário (`Contents: Read and
-  write` e, para o fluxo de PRs, `Pull requests: Read and write`), nunca *classic tokens* com
-  acesso total.
+- PATs do GitHub são **fine-grained**, escopados ao mínimo necessário, nunca *classic tokens*.
 - Secrets do Worker são sempre marcados como `Secret` (criptografado), nunca `Plaintext`.
 - Toda ferramenta exposta ao Claude fica configurada como **"Requer aprovação"** no conector,
   então nada roda sem confirmação explícita antes de cada chamada.

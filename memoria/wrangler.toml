@@ -1,0 +1,8 @@
+name = "mcp-memoria"
+main = "worker.js"
+compatibility_date = "2026-08-22"
+
+[[d1_databases]]
+binding = "DB"
+database_name = "mcp-memoria-db"
+database_id = "SUBSTITUIR_PELO_ID_RETORNADO_NO_PASSO_1"
