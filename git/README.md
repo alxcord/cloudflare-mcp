@@ -18,7 +18,7 @@ sem build.
 ## O que ele faz
 
 Implementa o protocolo MCP (JSON-RPC 2.0 sobre HTTP — `initialize`, `tools/list`, `tools/call`)
-e expõe 17 ferramentas que chamam a API REST do GitHub usando um Personal Access Token guardado
+e expõe 27 ferramentas que chamam a API REST do GitHub usando um Personal Access Token guardado
 como secret do Worker.
 
 ### Arquivos e commits
@@ -53,6 +53,31 @@ como secret do Worker.
 | `comment_pull_request` | Comentário geral na conversa do PR |
 | `review_pull_request` | Revisão formal: `COMMENT`, `APPROVE` ou `REQUEST_CHANGES`, com comentários em linhas específicas do diff |
 
+### Issues
+
+| Ferramenta | O que faz |
+|---|---|
+| `list_issues` | Lista issues abertas, fechadas ou todas, com filtro por `labels`. Nunca inclui PRs |
+| `get_issue` | Detalhes de uma issue: descrição, estado, labels, responsaveis |
+| `create_issue` | Abre uma issue nova, com `labels` e `assignees` opcionais |
+| `update_issue` | Altera título, descrição, estado, labels ou responsaveis |
+| `comment_issue` | Comentário na conversa da issue |
+
+### Actions (read-only)
+
+| Ferramenta | O que faz |
+|---|---|
+| `list_workflow_runs` | Lista execuções de workflow, com filtro por `workflow`, `branch`, `status` |
+| `get_workflow_run` | Detalhes de uma execução: status, conclusão, branch, commit |
+| `list_workflow_run_jobs` | Jobs de uma execução, com os steps individuais e onde falhou |
+
+### Pages (read-only)
+
+| Ferramenta | O que faz |
+|---|---|
+| `get_pages_site` | Configuração publicada: URL, status, source (branch/pasta), domínio customizado |
+| `get_pages_build_status` | Status do último build/deploy — sucesso, erro (com mensagem) ou construíndo |
+
 Todas as ferramentas recebem `owner` e `repo` como parâmetros — não é um MCP amarrado a um
 repositório específico, funciona com qualquer repositório que o token tenha permissão de acessar.
 
@@ -60,6 +85,11 @@ Diferente do `mcp-wger` (que expõe ferramentas genéricas de REST — `api_get`
 aqui cada operação tem sua própria ferramenta: a parte da API do GitHub usada é pequena, estável
 e bem conhecida, e algumas operações não são uma chamada só (o `push_files` orquestra cinco
 chamadas encadeadas da Git Trees API para caber tudo em um commit).
+
+> `comment_pull_request` e `comment_issue` chamam o mesmo endpoint do GitHub por baixo (comentários
+> de PR e de issue são a mesma coisa na API) — ficam como ferramentas separadas porque o
+> vocabulário de cada recurso é diferente e evita confundir o Claude sobre qual número está
+> comentando.
 
 ## Fluxo típico com branch e PR
 
@@ -73,6 +103,11 @@ parâmetro `branch`, então o ciclo completo é feito só com este MCP:
 3. `create_pull_request` com `head: 'feat/alguma-coisa'` — abre o PR.
 4. `get_pull_request_diff` — revisa o que mudou de fato.
 5. `merge_pull_request` e depois `delete_branch` — fecha o ciclo.
+
+Para acompanhar o deploy depois do merge (ex: neste próprio repositório, onde os Workers têm
+build automático), `list_workflow_runs` com `branch: 'main'` mostra a execução mais recente, e
+`list_workflow_run_jobs` mostra onde falhou, se falhou. Para repositórios com GitHub Pages
+servido via Jekyll clássico (não via Actions), `get_pages_build_status` é o equivalente.
 
 ## Autenticação
 
@@ -142,6 +177,9 @@ O secret `PAT` é um fine-grained token, com as permissões de repositório:
 | `Metadata` | Read-only | Obrigatória, marcada automaticamente |
 | `Contents` | Read and write | Arquivos, commits e branches (a Git Refs API cai neste escopo) |
 | `Pull requests` | Read and write | Abrir, atualizar, comentar, revisar e mergear PRs |
+| `Issues` | Read and write | Abrir, atualizar e comentar issues |
+| `Actions` | Read-only | Consultar execuções de workflow, jobs e steps |
+| `Pages` | Read-only | Consultar configuração do site e status do último build |
 
 Se o token vazar, a forma de invalidar é revogá-lo em
 [github.com/settings/personal-access-tokens](https://github.com/settings/personal-access-tokens)
@@ -159,16 +197,16 @@ e gerar outro; trocar o `MCP_SECRET` corta o acesso do Claude ao Worker, mas nã
    - `Only select repositories` e selecione só os repositórios que esse MCP vai precisar, **ou**
    - `All repositories`, se o MCP precisa escrever em vários repos (ex: site pessoal + vault do
      Obsidian).
-5. Em **Permissions > Repository permissions**, defina `Contents: Read and write` e
-   `Pull requests: Read and write`. `Metadata: Read-only` é marcado automaticamente
-   (obrigatório).
+5. Em **Permissions > Repository permissions**, defina `Contents: Read and write`,
+   `Pull requests: Read and write`, `Issues: Read and write`, `Actions: Read-only` e
+   `Pages: Read-only`. `Metadata: Read-only` é marcado automaticamente (obrigatório).
 6. Clique em **Generate token** e copie o valor imediatamente — o GitHub só mostra uma vez.
 
-> Para adicionar a permissão de Pull requests a um token que **já existe**, não é preciso gerar
-> outro: abra o token em
+> Para adicionar permissões novas a um token que **já existe**, não é preciso gerar outro: abra
+> o token em
 > [github.com/settings/personal-access-tokens](https://github.com/settings/personal-access-tokens),
-> marque a permissão nova e salve. O valor do token não muda, então o secret `PAT` no Cloudflare
-> continua válido.
+> marque as permissões novas e salve. O valor do token não muda, então o secret `PAT` no
+> Cloudflare continua válido.
 
 ### 2. Criar o Worker no Cloudflare
 
@@ -264,7 +302,8 @@ POST https://mcp-git.<seu-dominio>/<MCP_SECRET>/mcp
 Peça pro Claude chamar a ferramenta `whoami`. Deve retornar o `login`, `name` e `id` da conta do
 GitHub dona do token — confirmando que a cadeia completa (Claude → OAuth → Worker → GitHub) está
 funcionando. Para validar o bloco de PRs, `list_pull_requests` em qualquer repo é o teste mais
-barato: se o PAT estiver sem a permissão de Pull requests, ele responde `403`.
+barato: se o PAT estiver sem a permissão de Pull requests, ele responde `403`. O mesmo vale para
+`list_issues` (Issues), `list_workflow_runs` (Actions) e `get_pages_site` (Pages).
 
 ## Atualizando o código
 
@@ -295,8 +334,16 @@ classe mais boba de quebra (erro de sintaxe derrubando o build).
 - `review_pull_request` com `event: 'APPROVE'` falha com `422` quando o autor do PR é o mesmo
   usuário do PAT — o GitHub não deixa ninguém aprovar o próprio PR. Como o PAT normalmente é da
   mesma conta que abriu o PR, na prática só `COMMENT` funciona em PRs próprios.
-- `comment_pull_request` usa o endpoint de comentários de issue. Se ele responder `403` mesmo
-  com `Pull requests: Read and write`, adicionar `Issues: Read and write` ao PAT resolve.
+- `comment_pull_request` e `comment_issue` usam o endpoint de comentários de issue (a API do
+  GitHub trata PR e issue como o mesmo recurso de comentário).
+- `list_workflow_runs` sem `workflow` lista execuções de todos os workflows do repo; passando
+  o nome do arquivo (ex: `deploy.yml`) filtra só aquele. Repositórios sem Actions configurado
+  respondem lista vazia, não erro.
+- `get_pages_site` e `get_pages_build_status` respondem `404` em repositórios sem GitHub Pages
+  habilitado — não é erro de permissão, é o repo não ter Pages configurado.
+- `get_pages_build_status` reflete o build clássico do Pages (source = branch/pasta). Sites que
+  publicam via workflow do Actions (source = GitHub Actions) não têm "builds" nesse sentido —
+  use `list_workflow_runs` para acompanhar o deploy desses.
 - Branches protegidas continuam protegidas: o `merge_pull_request` respeita as regras do
   repositório (checks obrigatórios, revisão exigida) e falha com `405` se elas não forem
   atendidas. O Worker não tem como contornar isso, nem deveria.

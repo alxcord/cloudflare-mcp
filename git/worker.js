@@ -3,7 +3,8 @@
 //
 // Secrets necessarios (aba Settings > Variables and Secrets do Worker):
 //   PAT         - GitHub fine-grained personal access token
-//                 (Contents: Read and write + Pull requests: Read and write)
+//                 (Contents: Read and write, Pull requests: Read and write,
+//                  Issues: Read and write, Actions: Read-only, Pages: Read-only)
 //   MCP_SECRET  - usado como (a) senha de aprovacao na tela /authorize e (b) chave de assinatura
 //                 HMAC dos tokens OAuth emitidos por este Worker. NAO viaja mais na URL.
 //
@@ -30,6 +31,7 @@ const ACCESS_TOKEN_TTL = 60 * 60 * 24 * 30; // 30 dias
 const MERGE_METHODS = ['merge', 'squash', 'rebase'];
 const REVIEW_EVENTS = ['COMMENT', 'APPROVE', 'REQUEST_CHANGES'];
 const DIFF_MAX_CHARS = 60000;          // corta diffs gigantes antes de devolver ao Claude
+const ISSUE_STATES = ['open', 'closed', 'all'];
 
 // ---------- JSON-RPC helpers ----------
 
@@ -375,6 +377,148 @@ const TOOLS = [
       },
       required: ['owner', 'repo', 'number']
     }
+  },
+  {
+    name: 'list_issues',
+    description: 'Lista as issues de um repo do GitHub, abertas, fechadas ou todas. Nao inclui pull requests na lista.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        owner: { type: 'string' },
+        repo: { type: 'string' },
+        state: { type: 'string', description: 'open, closed ou all (padrao: open)' },
+        labels: { type: 'string', description: 'Lista de labels separadas por virgula' },
+        per_page: { type: 'number', description: 'Quantas issues trazer (padrao 30, maximo 100)' }
+      },
+      required: ['owner', 'repo']
+    }
+  },
+  {
+    name: 'get_issue',
+    description: 'Retorna os detalhes de uma issue: titulo, descricao, estado, labels e responsaveis.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        owner: { type: 'string' },
+        repo: { type: 'string' },
+        number: { type: 'number' }
+      },
+      required: ['owner', 'repo', 'number']
+    }
+  },
+  {
+    name: 'create_issue',
+    description: 'Abre uma nova issue em um repo do GitHub.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        owner: { type: 'string' },
+        repo: { type: 'string' },
+        title: { type: 'string' },
+        body: { type: 'string' },
+        labels: { type: 'array', items: { type: 'string' } },
+        assignees: { type: 'array', items: { type: 'string' } }
+      },
+      required: ['owner', 'repo', 'title']
+    }
+  },
+  {
+    name: 'update_issue',
+    description: 'Altera titulo, descricao, estado (open/closed), labels ou responsaveis de uma issue existente.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        owner: { type: 'string' },
+        repo: { type: 'string' },
+        number: { type: 'number' },
+        title: { type: 'string' },
+        body: { type: 'string' },
+        state: { type: 'string', description: 'open ou closed' },
+        labels: { type: 'array', items: { type: 'string' } },
+        assignees: { type: 'array', items: { type: 'string' } }
+      },
+      required: ['owner', 'repo', 'number']
+    }
+  },
+  {
+    name: 'comment_issue',
+    description: 'Escreve um comentario em uma issue.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        owner: { type: 'string' },
+        repo: { type: 'string' },
+        number: { type: 'number' },
+        body: { type: 'string' }
+      },
+      required: ['owner', 'repo', 'number', 'body']
+    }
+  },
+  {
+    name: 'list_workflow_runs',
+    description: 'Lista execucoes de workflow (Actions) de um repo, mais recentes primeiro.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        owner: { type: 'string' },
+        repo: { type: 'string' },
+        workflow: { type: 'string', description: 'Nome do arquivo do workflow (ex: deploy.yml) ou o id numerico, opcional' },
+        branch: { type: 'string' },
+        status: { type: 'string', description: 'queued, in_progress, completed, success, failure, etc (opcional)' },
+        per_page: { type: 'number', description: 'Quantas execucoes trazer (padrao 20, maximo 100)' }
+      },
+      required: ['owner', 'repo']
+    }
+  },
+  {
+    name: 'get_workflow_run',
+    description: 'Retorna os detalhes de uma execucao de workflow: status, conclusao, branch, commit e duracao.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        owner: { type: 'string' },
+        repo: { type: 'string' },
+        run_id: { type: 'number' }
+      },
+      required: ['owner', 'repo', 'run_id']
+    }
+  },
+  {
+    name: 'list_workflow_run_jobs',
+    description: 'Lista os jobs de uma execucao de workflow, com os steps de cada um e onde falhou, se falhou.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        owner: { type: 'string' },
+        repo: { type: 'string' },
+        run_id: { type: 'number' }
+      },
+      required: ['owner', 'repo', 'run_id']
+    }
+  },
+  {
+    name: 'get_pages_site',
+    description: 'Retorna a configuracao do GitHub Pages de um repo: URL publicada, status, source (branch/pasta) e se e um dominio customizado.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        owner: { type: 'string' },
+        repo: { type: 'string' }
+      },
+      required: ['owner', 'repo']
+    }
+  },
+  {
+    name: 'get_pages_build_status',
+    description: 'Retorna o status do ultimo build/deploy do GitHub Pages: sucesso, erro (com mensagem) ou construindo.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        owner: { type: 'string' },
+        repo: { type: 'string' }
+      },
+      required: ['owner', 'repo']
+    }
   }
 ];
 
@@ -689,6 +833,171 @@ async function toolReviewPullRequest(env, args) {
   return { id: review.id, state: review.state, url: review.html_url };
 }
 
+// ---------- Issues ----------
+
+function summarizeIssue(issue) {
+  return {
+    number: issue.number,
+    title: issue.title,
+    state: issue.state,
+    author: issue.user && issue.user.login,
+    labels: (issue.labels || []).map(l => (typeof l === 'string' ? l : l.name)),
+    assignees: (issue.assignees || []).map(a => a.login),
+    url: issue.html_url
+  };
+}
+
+async function toolListIssues(env, args) {
+  const { owner, repo, state = 'open', labels, per_page = 30 } = args;
+  if (!ISSUE_STATES.includes(state)) {
+    throw new Error(`Estado invalido: ${state}. Use ${ISSUE_STATES.join(', ')}.`);
+  }
+  const limit = Math.min(Math.max(Number(per_page) || 30, 1), 100);
+  const q = new URLSearchParams({ state, per_page: String(limit) });
+  if (labels) q.set('labels', labels);
+  const data = await gh(env, `/repos/${owner}/${repo}/issues?${q.toString()}`);
+  // a API de issues do GitHub tambem devolve pull requests; filtra fora
+  return data.filter(i => !i.pull_request).map(summarizeIssue);
+}
+
+async function toolGetIssue(env, args) {
+  const { owner, repo, number } = args;
+  const issue = await gh(env, `/repos/${owner}/${repo}/issues/${number}`);
+  if (issue.pull_request) throw new Error(`${owner}/${repo}#${number} e um pull request, nao uma issue`);
+  return { ...summarizeIssue(issue), body: issue.body };
+}
+
+async function toolCreateIssue(env, args) {
+  const { owner, repo, title, body, labels, assignees } = args;
+  const issue = await gh(env, `/repos/${owner}/${repo}/issues`, {
+    method: 'POST',
+    body: JSON.stringify({
+      title,
+      ...(body ? { body } : {}),
+      ...(labels ? { labels } : {}),
+      ...(assignees ? { assignees } : {})
+    })
+  });
+  return summarizeIssue(issue);
+}
+
+async function toolUpdateIssue(env, args) {
+  const { owner, repo, number, title, body, state, labels, assignees } = args;
+  const patch = {};
+  if (title !== undefined) patch.title = title;
+  if (body !== undefined) patch.body = body;
+  if (labels !== undefined) patch.labels = labels;
+  if (assignees !== undefined) patch.assignees = assignees;
+  if (state !== undefined) {
+    if (state !== 'open' && state !== 'closed') throw new Error(`Estado invalido: ${state}. Use open ou closed.`);
+    patch.state = state;
+  }
+  if (Object.keys(patch).length === 0) {
+    throw new Error('Nada para atualizar: informe title, body, state, labels ou assignees');
+  }
+  const issue = await gh(env, `/repos/${owner}/${repo}/issues/${number}`, {
+    method: 'PATCH',
+    body: JSON.stringify(patch)
+  });
+  return summarizeIssue(issue);
+}
+
+async function toolCommentIssue(env, args) {
+  const { owner, repo, number, body } = args;
+  const c = await gh(env, `/repos/${owner}/${repo}/issues/${number}/comments`, {
+    method: 'POST',
+    body: JSON.stringify({ body })
+  });
+  return { id: c.id, url: c.html_url };
+}
+
+// ---------- Actions ----------
+
+function summarizeWorkflowRun(run) {
+  return {
+    id: run.id,
+    name: run.name,
+    status: run.status,
+    conclusion: run.conclusion,
+    branch: run.head_branch,
+    commit: run.head_sha,
+    event: run.event,
+    url: run.html_url,
+    created_at: run.created_at,
+    updated_at: run.updated_at
+  };
+}
+
+async function toolListWorkflowRuns(env, args) {
+  const { owner, repo, workflow, branch, status, per_page = 20 } = args;
+  const limit = Math.min(Math.max(Number(per_page) || 20, 1), 100);
+  const q = new URLSearchParams({ per_page: String(limit) });
+  if (branch) q.set('branch', branch);
+  if (status) q.set('status', status);
+  const base = workflow
+    ? `/repos/${owner}/${repo}/actions/workflows/${encodeURIComponent(workflow)}/runs`
+    : `/repos/${owner}/${repo}/actions/runs`;
+  const data = await gh(env, `${base}?${q.toString()}`);
+  return (data.workflow_runs || []).map(summarizeWorkflowRun);
+}
+
+async function toolGetWorkflowRun(env, args) {
+  const { owner, repo, run_id } = args;
+  const run = await gh(env, `/repos/${owner}/${repo}/actions/runs/${run_id}`);
+  return {
+    ...summarizeWorkflowRun(run),
+    run_attempt: run.run_attempt,
+    run_started_at: run.run_started_at
+  };
+}
+
+async function toolListWorkflowRunJobs(env, args) {
+  const { owner, repo, run_id } = args;
+  const data = await gh(env, `/repos/${owner}/${repo}/actions/runs/${run_id}/jobs`);
+  return (data.jobs || []).map(job => ({
+    id: job.id,
+    name: job.name,
+    status: job.status,
+    conclusion: job.conclusion,
+    started_at: job.started_at,
+    completed_at: job.completed_at,
+    steps: (job.steps || []).map(s => ({
+      name: s.name,
+      status: s.status,
+      conclusion: s.conclusion,
+      number: s.number
+    }))
+  }));
+}
+
+// ---------- Pages ----------
+
+async function toolGetPagesSite(env, args) {
+  const { owner, repo } = args;
+  const site = await gh(env, `/repos/${owner}/${repo}/pages`);
+  return {
+    url: site.html_url || site.url,
+    status: site.status,
+    cname: site.cname,
+    custom_404: site.custom_404,
+    https_enforced: site.https_enforced,
+    source: site.source
+  };
+}
+
+async function toolGetPagesBuildStatus(env, args) {
+  const { owner, repo } = args;
+  const build = await gh(env, `/repos/${owner}/${repo}/pages/builds/latest`);
+  return {
+    status: build.status,
+    error: build.error && build.error.message ? build.error.message : null,
+    commit: build.commit,
+    duration_ms: build.duration,
+    created_at: build.created_at,
+    updated_at: build.updated_at
+  };
+}
+
 async function callTool(env, name, args) {
   switch (name) {
     case 'whoami': return toolWhoami(env);
@@ -708,6 +1017,16 @@ async function callTool(env, name, args) {
     case 'merge_pull_request': return toolMergePullRequest(env, args);
     case 'comment_pull_request': return toolCommentPullRequest(env, args);
     case 'review_pull_request': return toolReviewPullRequest(env, args);
+    case 'list_issues': return toolListIssues(env, args);
+    case 'get_issue': return toolGetIssue(env, args);
+    case 'create_issue': return toolCreateIssue(env, args);
+    case 'update_issue': return toolUpdateIssue(env, args);
+    case 'comment_issue': return toolCommentIssue(env, args);
+    case 'list_workflow_runs': return toolListWorkflowRuns(env, args);
+    case 'get_workflow_run': return toolGetWorkflowRun(env, args);
+    case 'list_workflow_run_jobs': return toolListWorkflowRunJobs(env, args);
+    case 'get_pages_site': return toolGetPagesSite(env, args);
+    case 'get_pages_build_status': return toolGetPagesBuildStatus(env, args);
     default: throw new Error(`Ferramenta desconhecida: ${name}`);
   }
 }
@@ -721,7 +1040,7 @@ async function handleRpc(env, body) {
     return jsonRpcResult(id, {
       protocolVersion: '2024-11-05',
       capabilities: { tools: {} },
-      serverInfo: { name: 'alexcordeiro-github-mcp', version: '2.1.0' }
+      serverInfo: { name: 'alexcordeiro-github-mcp', version: '2.2.0' }
     });
   }
   if (method === 'notifications/initialized') {
