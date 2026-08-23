@@ -329,6 +329,7 @@ async function handleAuthorize(env, url) {
     return html(approveForm(formParams));
   }
   if (!env.MCP_SECRET || key !== env.MCP_SECRET) {
+    await new Promise(r => setTimeout(r, 2000));
     return html(approveForm(formParams, 'Segredo incorreto. Tente de novo.'), 401);
   }
 

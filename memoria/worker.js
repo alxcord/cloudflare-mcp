@@ -6,7 +6,7 @@
 //   API_TOKEN   — Bearer token estático para a API REST (/api/*)
 //
 // D1 binding (wrangler.toml + Settings > Bindings do Worker):
-//   DB          — banco criado com: wrangler d1 create mcp-memoria-db
+//   DB          — banco criado com: wrangler d1 create memoria-db
 //                 Copiar o database_id retornado e colar em wrangler.toml antes do primeiro push.
 //
 // Após o primeiro deploy bem-sucedido, inicializar as tabelas uma única vez:
@@ -490,7 +490,10 @@ async function handleAuthorize(env, url) {
   const formParams = { client_id, redirect_uri, state, code_challenge, code_challenge_method, response_type };
 
   if (key === null) return htmlResponse(approveForm(formParams));
-  if (!env.MCP_SECRET || key !== env.MCP_SECRET) return htmlResponse(approveForm(formParams, 'Segredo incorreto. Tente de novo.'), 401);
+  if (!env.MCP_SECRET || key !== env.MCP_SECRET) {
+    await new Promise(r => setTimeout(r, 2000));
+    return htmlResponse(approveForm(formParams, 'Segredo incorreto. Tente de novo.'), 401);
+  }
 
   const code = await signJWT({
     iss: issuer, aud: client_id, redirect_uri, code_challenge,
