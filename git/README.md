@@ -286,4 +286,6 @@ fazendo a mudança. Um `node --check worker.js` antes do push evita a classe mai
 - `get_pull_request_diff` trunca o diff (padrão 60.000 caracteres).
 - `push_files` e `write_file` não servem para arquivos binários.
 - Access tokens não podem ser revogados individualmente — só trocando o `MCP_SECRET`.
-- `/authorize` não tem rate limit por tentativas de senha.
+- `/authorize` aplica um delay de 2s em tentativas de senha incorretas, dificultando força bruta,
+  mas não impede flood de requisições (DoS por volume). Para proteção adicional, ative o
+  **Bot Fight Mode** em **Security > Bots** no painel do Cloudflare.

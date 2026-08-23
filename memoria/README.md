@@ -171,12 +171,9 @@ curl https://mcp-memoria.<seu-dominio>/api/nodes \
 2. **Nome**: `MCP Memória` (ou qualquer nome identificável).
 3. **URL do servidor MCP remoto**: `https://mcp-memoria.<seu-dominio>/mcp`.
 4. Em **Configurações avançadas > ID do Cliente OAuth**, preencha um valor fixo qualquer
-   (ex: `claude-memoria`) — evita que o Claude tente registro automático.
-   Deixe **Client Secret** vazio.
-5. Clique em **Adicionar** e depois **Vincular**. Isso abre `/authorize` — cole o `MCP_SECRET`
-   e clique em **Aprovar**.
-6. Em **Permissões de ferramentas**, confirme que todas as ferramentas ficam com
-   **"Requer aprovação"**.
+   (ex: `claude-memoria`). Deixe **Client Secret** vazio.
+5. Clique em **Adicionar** e depois em **Vincular**. Cole o `MCP_SECRET` na tela de aprovação.
+6. Confirme que todas as ferramentas ficam com **"Requer aprovação"**.
 
 > **Atenção:** a URL do conector deve incluir o sufixo `/mcp` no final. Sem ele, o OAuth
 > funciona mas a conexão MCP falha com "nenhum servidor MCP encontrado".
@@ -228,3 +225,6 @@ detecta o commit e faz o deploy automaticamente.
 - Access tokens MCP não podem ser revogados individualmente antes de expirar (30 dias). Para
   invalidar tudo de uma vez, troque o `MCP_SECRET`.
 - O `API_TOKEN` é um segredo estático — não expira. Se vazar, troque o valor no Cloudflare.
+- `/authorize` aplica um delay de 2s em tentativas de senha incorretas, dificultando força bruta,
+  mas não impede flood de requisições (DoS por volume). Para proteção adicional, ative o
+  **Bot Fight Mode** em **Security > Bots** no painel do Cloudflare.

@@ -4,20 +4,11 @@ Servidor MCP que dá ao Claude leitura e **escrita real** na API do Wger (app de
 usando a instância pública `wger.de`. Roda como Cloudflare Worker, arquivo único, sem build.
 
 - Worker: `mcp-wger`
-- Domínio: `https://mcp-wger.alexcordeiro.dev`
-- Rota MCP: `https://mcp-wger.alexcordeiro.dev/mcp` (autenticada por **OAuth 2.1 + PKCE**, não
-  por segredo na URL — ver [Autenticação](#autenticação))
+- Domínio: `https://mcp-wger.<seu-dominio>`
+- Rota MCP: `https://mcp-wger.<seu-dominio>/mcp` (autenticada por **OAuth 2.1 + PKCE**)
 - Código: [`worker.js`](./worker.js)
 - Config do Worker: [`wrangler.toml`](./wrangler.toml)
 - Instância Wger: `https://wger.de` (nuvem pública, API `https://wger.de/api/v2/`)
-
-> Este Worker é a segunda versão do padrão usado no [`mcp-git`](../git). A primeira versão
-> autenticava com um segredo embutido na URL (`/<MCP_SECRET>/mcp`), igual ao `mcp-git` ainda
-> usa hoje. Aqui migramos para OAuth por causa de um ponto de segurança: URL com segredo pode
-> vazar por lugares que não são "o meio do caminho da requisição" — histórico do navegador, logs
-> de acesso, header `Referer`, prints de tela — mesmo estando tudo em HTTPS. Ver a seção
-> [Por que OAuth em vez de segredo na URL](#por-que-oauth-em-vez-de-segredo-na-url) para mais
-> detalhes.
 
 ## O que ele faz
 
@@ -84,20 +75,6 @@ Não há banco, KV nem Durable Object — tudo é **stateless**, usando JWTs (HS
   custom connector do Claude é preenchido manualmente com um valor fixo (o Worker aceita
   qualquer string ali, não valida contra uma lista).
 
-### Por que OAuth em vez de segredo na URL
-
-HTTPS já criptografa a requisição inteira (path incluído), então um segredo na URL não é "visível
-na rede" — o risco real é outro: URLs tendem a ficar gravadas em lugares que headers não
-alcançam (histórico de navegador, logs de acesso de servidores/proxies, header `Referer` se a
-página disparar alguma requisição pra fora, prints de tela, ou coladas no campo errado — já
-aconteceu aqui de um gerenciador de senhas colar uma referência interna em vez do valor puro).
-Um Bearer token no header não sofre esses vazamentos de superfície.
-
-O ganho prático de migrar: o `MCP_SECRET` deixa de ser transmitido em **toda chamada, para
-sempre** — ele agora é digitado **uma única vez**, na tela de aprovação, no momento de vincular o
-conector. Depois disso, quem trafega em cada chamada é um token de vida limitada (30 dias), que
-nunca aparece em uma URL.
-
 ### Sobre o Permanent Token do Wger
 
 É diferente do PAT do GitHub: não expira e não precisa de renovação. É gerado direto nas
@@ -141,31 +118,28 @@ ali. Se vazar, a única forma de invalidar é gerar um novo token nas configura�
 
 1. Em **Settings > Variables and Secrets > Add variable**, adicione:
    - `WGER_TOKEN` — o Permanent Token copiado no passo 1. Marcar como **Secret**.
-   - `MCP_SECRET` — uma string aleatória nova (não reaproveitar a do `mcp-git`). Marcar como
-     **Secret**. Diferente da v1, ela não vai mais na URL — serve como senha da tela de
-     aprovação e como chave de assinatura dos tokens OAuth.
+   - `MCP_SECRET` — uma string aleatória nova. Marcar como **Secret**.
 2. Salve. Não precisa redeploy manual — o Worker lê os secrets em runtime.
 
 ### 5. Apontar um domínio próprio
 
 1. Em **Settings > Domains & Routes > Add > Domain**.
 2. Escolha a mesma zona usada no `mcp-git` e defina o subdomínio `mcp-wger`.
-3. O Cloudflare emite certificado SSL automaticamente. Em poucos minutos o Worker responde em
-   `https://mcp-wger.alexcordeiro.dev`.
+3. O Cloudflare emite certificado SSL automaticamente.
 
 ### 6. Testar antes de conectar ao Claude
 
 A metadata OAuth deve responder normalmente:
 
 ```
-GET https://mcp-wger.alexcordeiro.dev/.well-known/oauth-authorization-server
+GET https://mcp-wger.<seu-dominio>/.well-known/oauth-authorization-server
 → 200, JSON com authorization_endpoint e token_endpoint
 ```
 
 Sem Bearer token, `/mcp` deve responder `401`:
 
 ```
-POST https://mcp-wger.alexcordeiro.dev/mcp
+POST https://mcp-wger.<seu-dominio>/mcp
 → 401, {"error":"invalid_token", ...}
 ```
 
@@ -174,16 +148,11 @@ POST https://mcp-wger.alexcordeiro.dev/mcp
 1. Em [claude.ai/settings/connectors](https://claude.ai/settings/connectors), clique em
    **Adicionar > Adicionar conector personalizado**.
 2. **Nome**: algo identificável só para você (ex: `MCP Wger`).
-3. **URL do servidor MCP remoto**: `https://mcp-wger.alexcordeiro.dev/mcp` (sem segredo nenhum
-   na URL desta vez).
+3. **URL do servidor MCP remoto**: `https://mcp-wger.<seu-dominio>/mcp`.
 4. Em **Configurações avançadas > ID do Cliente OAuth**, preencha um valor fixo qualquer (ex:
-   `claude-wger`) — evita que o Claude tente se auto-registrar via um endpoint que este Worker
-   não implementa. Deixe **Client Secret** vazio (é um fluxo PKCE, não precisa).
-5. Clique em **Adicionar** e depois em **Vincular**. Isso abre `/authorize` — cole o
-   `MCP_SECRET` configurado no passo 4 e clique em **Aprovar**. O Claude troca o código pelo
-   access token automaticamente nos bastidores.
-6. Depois de vinculado, em **Permissões de ferramentas**, todas as ferramentas vêm com
-   **"Requer aprovação"** por padrão — nada executa sem confirmação manual antes de cada chamada.
+   `claude-wger`). Deixe **Client Secret** vazio.
+5. Clique em **Adicionar** e depois em **Vincular**. Cole o `MCP_SECRET` na tela de aprovação.
+6. Confirme que todas as ferramentas ficam com **"Requer aprovação"**.
 
 ### 8. Validar
 
@@ -206,8 +175,8 @@ Cloudflare Workers Builds detecta o commit, builda e faz o deploy automaticament
   resposta da ferramenta.
 - Access tokens não podem ser revogados individualmente antes de expirar (30 dias) — só trocando
   o `MCP_SECRET`, o que invalida todos de uma vez.
-- `/authorize` não tem proteção contra tentativas repetidas de adivinhar o `MCP_SECRET` (sem
-  rate limit nem bloqueio por tentativas). Para um segredo longo e aleatório o risco é baixo, mas
-  é uma limitação a ter em mente.
+- `/authorize` aplica um delay de 2s em tentativas de senha incorretas, dificultando força bruta,
+  mas não impede flood de requisições (DoS por volume). Para proteção adicional, ative o
+  **Bot Fight Mode** em **Security > Bots** no painel do Cloudflare.
 - O `WGER_TOKEN` não expira nem tem rotação automática. Se vazar, é preciso gerar um novo token
   nas configurações da conta do Wger.
