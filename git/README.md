@@ -6,14 +6,26 @@ sem build.
 
 - Worker: `mcp-git`
 - Domínio: `https://mcp-git.<seu-dominio>`
-- Rota MCP: `https://mcp-git.<seu-dominio>/mcp` (autenticada por **OAuth 2.1 + PKCE**, não por
-  segredo na URL — ver [Autenticação](#autenticação))
+- Rota MCP: `https://mcp-git.<seu-dominio>/mcp` (autenticada por **OAuth 2.1 + PKCE**)
 - Código: [`worker.js`](./worker.js)
 - Config do Worker: [`wrangler.toml`](./wrangler.toml)
 
 > Este Worker nasceu com o segredo embutido na URL (`/<MCP_SECRET>/mcp`) e foi migrado para
 > OAuth depois, seguindo o mesmo padrão já validado no [`mcp-wger`](../wger). Ver
 > [Por que OAuth em vez de segredo na URL](#por-que-oauth-em-vez-de-segredo-na-url).
+
+## Por que este Worker existe
+
+O conector oficial do GitHub no claude.ai é **só leitura** — o token OAuth que ele usa não tem
+permissão de escrita, mesmo autorizando escopos de `Contents`. Isso foi testado e confirmado
+(erro `403 Resource not accessible by integration`), inclusive desautorizando e reconectando o
+conector do zero. Não é uma questão de configuração.
+
+Custom connectors do claude.ai também não permitem enviar headers customizados, então não é
+possível simplesmente apontar para a API do GitHub com um Personal Access Token no header de
+Authorização. A solução é um Worker intermediário: ele armazena o PAT como secret do lado do
+servidor, expõe um endpoint MCP sem headers especiais, e por dentro autentica na API do GitHub
+usando o token real.
 
 ## O que ele faz
 
@@ -136,13 +148,11 @@ Não há banco, KV nem Durable Object — tudo é **stateless**, usando JWTs (HS
   original) e emite outro JWT como access token, válido por 30 dias.
 - `/mcp` só precisa validar a assinatura e a validade do JWT recebido — não consulta nada
   guardado em lugar nenhum.
-- **Não dá para revogar um token individual antes de expirar.** Se precisar invalidar tudo de
-  uma vez (token vazado, por exemplo), a forma é trocar o valor de `MCP_SECRET` no Cloudflare —
-  isso invalida instantaneamente qualquer código ou token já emitido, porque a assinatura deles
-  deixa de bater.
+- **Não dá para revogar um token individual antes de expirar.** Para invalidar tudo de uma vez,
+  troque o valor de `MCP_SECRET` no Cloudflare — isso invalida instantaneamente qualquer código
+  ou token já emitido.
 - Não há registro dinâmico de cliente (`/register` do RFC 7591): o campo **OAuth Client ID** no
-  custom connector do Claude é preenchido manualmente com um valor fixo (o Worker aceita
-  qualquer string ali, não valida contra uma lista).
+  custom connector do Claude é preenchido manualmente com um valor fixo.
 
 Rotas expostas pelo Worker:
 
@@ -155,18 +165,13 @@ Rotas expostas pelo Worker:
 
 ### Por que OAuth em vez de segredo na URL
 
-HTTPS já criptografa a requisição inteira (path incluído), então um segredo na URL não é "visível
-na rede" — o risco real é outro: URLs tendem a ficar gravadas em lugares que headers não
-alcançam (histórico de navegador, logs de acesso de servidores/proxies, header `Referer` se a
-página disparar alguma requisição pra fora, prints de tela, ou coladas no campo errado — já
-aconteceu aqui de um gerenciador de senhas colar uma referência interna em vez do valor puro).
-Um Bearer token no header não sofre esses vazamentos de superfície.
+HTTPS já criptografa a requisição inteira (path incluído), então um segredo na URL não é visível
+na rede. O risco real é outro: URLs ficam gravadas em histórico de navegador, logs de acesso,
+header `Referer` e prints de tela. Um Bearer token no header não sofre esses vazamentos.
 
-O ganho prático de migrar: o `MCP_SECRET` deixa de ser transmitido em **toda chamada, para
-sempre** — ele agora é digitado **uma única vez**, na tela de aprovação, no momento de vincular o
-conector. Depois disso, quem trafega em cada chamada é um token de vida limitada (30 dias), que
-nunca aparece em uma URL. No caso específico deste Worker o ganho pesa mais que no `mcp-wger`,
-porque o `PAT` que ele guarda dá escrita em **todos** os repositórios da conta.
+O ganho prático: o `MCP_SECRET` deixa de ser transmitido em toda chamada, para sempre — ele é
+digitado uma única vez, na tela de aprovação, no momento de vincular o conector. Depois disso,
+o que trafega é um token de vida limitada (30 dias) que nunca aparece em uma URL.
 
 ### Sobre o PAT do GitHub
 
@@ -190,173 +195,109 @@ e gerar outro; trocar o `MCP_SECRET` corta o acesso do Claude ao Worker, mas nã
 ### 1. Criar o Personal Access Token no GitHub
 
 1. Acesse [github.com/settings/personal-access-tokens/new](https://github.com/settings/personal-access-tokens/new).
-2. Dê um nome (ex: `MCP Worker - <finalidade>`).
-3. Em **Expiration**, escolha o prazo (o Cloudflare permite `No expiration`, mas o GitHub avisa
-   que não é o ideal em termos de segurança — considere um prazo definido e renovar depois).
-4. Em **Repository access**, escolha:
-   - `Only select repositories` e selecione só os repositórios que esse MCP vai precisar, **ou**
-   - `All repositories`, se o MCP precisa escrever em vários repos (ex: site pessoal + vault do
-     Obsidian).
+2. Dê um nome (ex: `MCP Worker - GitHub`).
+3. Em **Expiration**, escolha o prazo desejado.
+4. Em **Repository access**, escolha `Only select repositories` e selecione só os repositórios
+   necessários, ou `All repositories` se o MCP precisar escrever em vários repos.
 5. Em **Permissions > Repository permissions**, defina `Contents: Read and write`,
    `Pull requests: Read and write`, `Issues: Read and write`, `Actions: Read-only` e
-   `Pages: Read-only`. `Metadata: Read-only` é marcado automaticamente (obrigatório).
-6. Clique em **Generate token** e copie o valor imediatamente — o GitHub só mostra uma vez.
+   `Pages: Read-only`. `Metadata: Read-only` é marcado automaticamente.
+6. Clique em **Generate token** e copie o valor — o GitHub só mostra uma vez.
 
-> Para adicionar permissões novas a um token que **já existe**, não é preciso gerar outro: abra
-> o token em
+> Para adicionar permissões a um token já existente, abra-o em
 > [github.com/settings/personal-access-tokens](https://github.com/settings/personal-access-tokens),
-> marque as permissões novas e salve. O valor do token não muda, então o secret `PAT` no
-> Cloudflare continua válido.
+> marque as permissões novas e salve. O valor do token não muda.
 
 ### 2. Criar o Worker no Cloudflare
 
 1. No [dashboard do Cloudflare](https://dash.cloudflare.com), vá em **Workers & Pages > Create
    application**.
-2. Escolha **Start with Hello World!** para começar com um Worker de arquivo único editável
-   direto no painel.
-3. Dê o nome ao Worker (ex: `mcp-git`). **Atenção**: o nome não pode ser mudado depois pelo
-   editor de código, só em **Settings > General > Name** (renomeia o Worker, mas não muda a URL
-   `*.workers.dev` já gerada).
+2. Escolha **Start with Hello World!**.
+3. Dê o nome: `mcp-git`.
 4. Clique em **Deploy**.
 
 ### 3. Conectar o Worker a este repositório (deploy automático)
 
 1. No Worker, vá em **Settings > Build > Git repository** e clique em **GitHub**.
-2. Autorize o app **Cloudflare Workers and Pages** no GitHub, escolhendo **Only select
-   repositories** e marcando só este repositório (`cloudflare-mcp`) — evita dar acesso a todos
-   os repos da conta para o app do Cloudflare.
-3. De volta no Cloudflare, em **Connect to a repository**:
+2. Autorize o app **Cloudflare Workers and Pages** no GitHub, marcando só este repositório
+   (`cloudflare-mcp`).
+3. De volta no Cloudflare:
    - Repository: `cloudflare-mcp`
    - Production branch: `main`
-   - Em **Advanced settings > Path**, defina `/git` (a subpasta deste Worker dentro do
-     monorepo).
-   - Deploy command: `npx wrangler deploy` (padrão).
-4. Clique em **Connect**. Um push nessa subpasta já dispara build e deploy automáticos daqui
-   pra frente.
+   - Em **Advanced settings > Path**, defina `/git`.
+4. Clique em **Connect**.
 
 ### 4. Configurar os secrets do Worker
 
-1. Em **Settings > Variables and Secrets > Add variable**, adicione:
-   - `PAT` — o token gerado no passo 1. Marcar como **Secret**.
-   - `MCP_SECRET` — uma string longa e aleatória (ex: gerada com um gerenciador de senhas).
-     Marcar como **Secret**. Ela não vai na URL: serve como senha da tela de aprovação e como
-     chave de assinatura dos tokens OAuth.
-2. Salve. Não precisa redeploy manual — o Worker lê os secrets em runtime.
+Em **Settings > Variables and Secrets > Add variable**, adicione:
+
+- `PAT` — o token gerado no passo 1. Marcar como **Secret**.
+- `MCP_SECRET` — string longa e aleatória. Marcar como **Secret**.
 
 ### 5. Apontar um domínio próprio
 
 1. Em **Settings > Domains & Routes > Add > Domain**.
-2. Escolha uma zona sua no Cloudflare e defina o subdomínio (ex: `mcp-git`).
-3. O Cloudflare emite certificado SSL automaticamente. Em poucos minutos o Worker responde em
-   `https://mcp-git.<seu-dominio>`.
-
-> O domínio precisa bater com a constante `ISSUER` no topo do `worker.js` — ela é o `issuer`
-> anunciado na metadata OAuth e é usada para montar os endpoints `/authorize` e `/token`. Se
-> mudar o domínio, mude a constante junto.
+2. Defina o subdomínio `mcp-git` na mesma zona dos outros Workers.
+3. O Cloudflare emite o certificado SSL automaticamente.
 
 ### 6. Testar antes de conectar ao Claude
 
-A metadata OAuth deve responder normalmente:
+```bash
+# Metadata OAuth deve retornar 200
+curl https://mcp-git.<seu-dominio>/.well-known/oauth-authorization-server
 
-```
-GET https://mcp-git.<seu-dominio>/.well-known/oauth-authorization-server
-→ 200, JSON com authorization_endpoint e token_endpoint
-```
-
-Sem Bearer token, `/mcp` deve responder `401`:
-
-```
-POST https://mcp-git.<seu-dominio>/mcp
-→ 401, {"error":"invalid_token", ...}
-```
-
-E a rota antiga, com o segredo no path, não existe mais:
-
-```
-POST https://mcp-git.<seu-dominio>/<MCP_SECRET>/mcp
-→ 404 Not found
+# /mcp sem token deve retornar 401
+curl -X POST https://mcp-git.<seu-dominio>/mcp
 ```
 
 ### 7. Adicionar como custom connector no Claude
 
 1. Em [claude.ai/settings/connectors](https://claude.ai/settings/connectors), clique em
    **Adicionar > Adicionar conector personalizado**.
-2. **Nome**: algo identificável só para você (ex: `MCP Git`) — não é preciso incluir o domínio
-   no nome do conector.
-3. **URL do servidor MCP remoto**: `https://mcp-git.<seu-dominio>/mcp` (sem segredo nenhum na
-   URL). **Confira visualmente antes de confirmar** que o campo tem só a URL — um gerenciador de
-   senhas às vezes cola uma referência interna em vez do texto puro.
-4. Em **Configurações avançadas > ID do Cliente OAuth**, preencha um valor fixo qualquer (ex:
-   `claude-git`) — evita que o Claude tente se auto-registrar via um endpoint que este Worker
-   não implementa. Deixe **Client Secret** vazio (é um fluxo PKCE, não precisa).
-5. Clique em **Adicionar** e depois em **Vincular**. Isso abre `/authorize` — cole o
-   `MCP_SECRET` configurado no passo 4 e clique em **Aprovar**. O Claude troca o código pelo
-   access token automaticamente nos bastidores.
-6. Depois de vinculado, em **Permissões de ferramentas**, todas as ferramentas vêm com
-   **"Requer aprovação"** por padrão — nada executa sem confirmação manual antes de cada chamada.
-   Vale conferir que as ferramentas destrutivas (`delete_file`, `delete_branch`,
-   `merge_pull_request`) estão nesse modo.
+2. **Nome**: `MCP Git` (ou qualquer nome).
+3. **URL do servidor MCP remoto**: `https://mcp-git.<seu-dominio>/mcp`.
+4. Em **Configurações avançadas > ID do Cliente OAuth**, preencha um valor fixo (ex: `claude-git`).
+   Deixe **Client Secret** vazio.
+5. Clique em **Adicionar** e depois em **Vincular**. Cole o `MCP_SECRET` na tela de aprovação.
+6. Confirme que todas as ferramentas ficam com **"Requer aprovação"**.
 
 ### 8. Validar
 
-Peça pro Claude chamar a ferramenta `whoami`. Deve retornar o `login`, `name` e `id` da conta do
-GitHub dona do token — confirmando que a cadeia completa (Claude → OAuth → Worker → GitHub) está
-funcionando. Para validar o bloco de PRs, `list_pull_requests` em qualquer repo é o teste mais
-barato: se o PAT estiver sem a permissão de Pull requests, ele responde `403`. O mesmo vale para
-`list_issues` (Issues), `list_workflow_runs` (Actions) e `get_pages_site` (Pages).
+Peça ao Claude chamar `whoami`. Deve retornar o `login`, `name` e `id` da conta do GitHub dona
+do token. Para validar cada bloco de ferramentas: `list_pull_requests`, `list_issues`,
+`list_workflow_runs` e `get_pages_site` em qualquer repo cobrem todas as permissões do PAT.
 
 ## Atualizando o código
 
-Basta editar `worker.js` (e/ou `wrangler.toml`) neste repositório e dar push na `main`. O
-Cloudflare Workers Builds detecta o commit, builda e faz o deploy automaticamente — sem precisar
-colar código manualmente no editor do painel.
+Edite `worker.js` e faça push na `main`. O Cloudflare Workers Builds detecta o commit e faz o
+deploy automaticamente.
 
-Depois que o deploy sobe com ferramentas novas, o Claude **não** as enxerga automaticamente na
-sessão em andamento: a lista de ferramentas é lida no `tools/list` do handshake. É preciso
-recarregar a conexão (desligar e religar o conector, ou abrir uma conversa nova) para as
-ferramentas novas aparecerem.
+Depois que o deploy sobe com ferramentas novas, o Claude não as enxerga na sessão em andamento —
+a lista de ferramentas é lida no handshake inicial. Abra uma conversa nova ou recarregue o
+conector para as ferramentas novas aparecerem.
 
-**Cuidado com a auto-referência**: como é o próprio `mcp-git` que costuma escrever neste repo,
-qualquer mudança que quebre a autenticação deste Worker derruba, no mesmo deploy, a ferramenta
-que estava fazendo a mudança. Foi o que aconteceu na migração para OAuth: o commit precisou sair
-inteiro de uma vez (`push_files`), e o conector só voltou a funcionar depois de reconfigurado à
-mão no claude.ai. Mudanças assim exigem revisão antes do push, porque não dá para testar o
-endpoint novo sem já ter desligado o antigo. Um `node --check` no arquivo antes do push evita a
-classe mais boba de quebra (erro de sintaxe derrubando o build).
+**Cuidado com a auto-referência**: o próprio `mcp-git` é usado para escrever neste repositório.
+Qualquer mudança que quebre a autenticação derruba, no mesmo deploy, a ferramenta que estava
+fazendo a mudança. Um `node --check worker.js` antes do push evita a classe mais comum de quebra
+(erro de sintaxe).
 
 ## Limitações conhecidas
 
-- `push_files` cria um novo commit a partir do `HEAD` da branch no momento da chamada; não
-  faz merge de conflitos — se o arquivo mudou entre a leitura e a escrita, o commit pode
-  sobrescrever mudanças concorrentes.
-- `write_file`, `push_files` e `delete_file` usam `main` como branch padrão quando `branch` não é
-  informado. Em um fluxo de PR, passar a branch explicitamente é obrigatório.
+- `push_files` cria um commit a partir do `HEAD` da branch no momento da chamada; não faz merge
+  de conflitos — se o arquivo mudou entre a leitura e a escrita, o commit pode sobrescrever
+  mudanças concorrentes.
+- `write_file`, `push_files` e `delete_file` usam `main` como branch padrão quando `branch` não
+  é informado. Em um fluxo de PR, passar a branch explicitamente é obrigatório.
 - `review_pull_request` com `event: 'APPROVE'` falha com `422` quando o autor do PR é o mesmo
-  usuário do PAT — o GitHub não deixa ninguém aprovar o próprio PR. Como o PAT normalmente é da
-  mesma conta que abriu o PR, na prática só `COMMENT` funciona em PRs próprios.
-- `comment_pull_request` e `comment_issue` usam o endpoint de comentários de issue (a API do
-  GitHub trata PR e issue como o mesmo recurso de comentário).
-- `list_workflow_runs` sem `workflow` lista execuções de todos os workflows do repo; passando
-  o nome do arquivo (ex: `deploy.yml`) filtra só aquele. Repositórios sem Actions configurado
-  respondem lista vazia, não erro.
+  usuário do PAT — o GitHub não deixa ninguém aprovar o próprio PR.
+- `list_workflow_runs` sem `workflow` lista execuções de todos os workflows do repo.
 - `get_pages_site` e `get_pages_build_status` respondem `404` em repositórios sem GitHub Pages
-  habilitado — não é erro de permissão, é o repo não ter Pages configurado.
-- `get_pages_build_status` reflete o build clássico do Pages (source = branch/pasta). Sites que
-  publicam via workflow do Actions (source = GitHub Actions) não têm "builds" nesse sentido —
-  use `list_workflow_runs` para acompanhar o deploy desses.
-- Branches protegidas continuam protegidas: o `merge_pull_request` respeita as regras do
-  repositório (checks obrigatórios, revisão exigida) e falha com `405` se elas não forem
-  atendidas. O Worker não tem como contornar isso, nem deveria.
-- `get_pull_request_diff` trunca o diff (padrão 60.000 caracteres). PRs grandes vêm cortados —
-  aumentar `max_chars` ajuda até o limite do que cabe no contexto.
-- `create_branch` aceita branch ou SHA em `from`; tags não são resolvidas.
-- `push_files` e `write_file` mandam o conteúdo como UTF-8/base64 de texto: não servem para
-  arquivos binários.
-- Access tokens não podem ser revogados individualmente antes de expirar (30 dias) — só trocando
-  o `MCP_SECRET`, o que invalida todos de uma vez.
-- `/authorize` não tem proteção contra tentativas repetidas de adivinhar o `MCP_SECRET` (sem
-  rate limit nem bloqueio por tentativas). Para um segredo longo e aleatório o risco é baixo, mas
-  é uma limitação a ter em mente.
-- O `PAT` dá acesso a todos os repositórios que ele enxerga — se estiver com `All repositories`,
-  qualquer ferramenta de escrita alcança qualquer repo da conta. Vale conferir `owner`/`repo`/
-  `path` antes de aprovar cada chamada no conector.
+  habilitado.
+- `get_pages_build_status` reflete o build clássico do Pages. Sites que publicam via workflow do
+  Actions devem usar `list_workflow_runs`.
+- Branches protegidas continuam protegidas: `merge_pull_request` respeita as regras do
+  repositório e falha com `405` se elas não forem atendidas.
+- `get_pull_request_diff` trunca o diff (padrão 60.000 caracteres).
+- `push_files` e `write_file` não servem para arquivos binários.
+- Access tokens não podem ser revogados individualmente — só trocando o `MCP_SECRET`.
+- `/authorize` não tem rate limit por tentativas de senha.
