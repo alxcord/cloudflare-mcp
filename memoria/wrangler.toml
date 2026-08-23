@@ -5,4 +5,4 @@ compatibility_date = "2026-08-22"
 [[d1_databases]]
 binding = "DB"
 database_name = "memoria-db"
-database_id = "SUBSTITUIR_PELO_ID_RETORNADO_NO_PASSO_1"
+database_id = "a37c3622-7b5b-444b-8a68-30db5a446d21"
