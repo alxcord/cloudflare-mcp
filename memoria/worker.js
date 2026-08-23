@@ -25,9 +25,13 @@
 //   POST   /api/nodes              — grava nó
 //   PATCH  /api/nodes/:id         — atualiza nó
 //   DELETE /api/nodes/:id         — remove nó + arestas ligadas
-//   POST   /api/edges              — grava aresta
+//   POST   /api/edges              — grava aresta (cria ou mescla atributos se já existir)
 //   DELETE /api/edges/:id         — remove aresta
 //   GET    /api/query              — traversal (?origem=&via_relacao=&destino=&tipo=&limite=)
+//
+// Nós (nodes) e arestas (edges) têm atributos livres (JSON) e timestamps
+// criado_em / atualizado_em, mantidos automaticamente pelo Worker — não
+// precisam ser passados manualmente em `atributos`.
 
 const AUTH_CODE_TTL = 60;
 const ACCESS_TOKEN_TTL = 60 * 60 * 24 * 30; // 30 dias
@@ -111,11 +115,13 @@ const INIT_SQL = [
   `CREATE INDEX IF NOT EXISTS idx_nodes_tipo ON nodes(tipo)`,
   `CREATE INDEX IF NOT EXISTS idx_nodes_nome ON nodes(nome)`,
   `CREATE TABLE IF NOT EXISTS edges (
-    id           TEXT PRIMARY KEY,
-    origem       TEXT NOT NULL,
-    tipo_relacao TEXT NOT NULL,
-    destino      TEXT NOT NULL,
-    criado_em    TEXT NOT NULL DEFAULT (datetime('now'))
+    id            TEXT PRIMARY KEY,
+    origem        TEXT NOT NULL,
+    tipo_relacao  TEXT NOT NULL,
+    destino       TEXT NOT NULL,
+    atributos     TEXT NOT NULL DEFAULT '{}',
+    criado_em     TEXT NOT NULL DEFAULT (datetime('now')),
+    atualizado_em TEXT NOT NULL DEFAULT (datetime('now'))
   )`,
   `CREATE INDEX IF NOT EXISTS idx_edges_origem ON edges(origem)`,
   `CREATE INDEX IF NOT EXISTS idx_edges_destino ON edges(destino)`,
@@ -144,13 +150,14 @@ const TOOLS = [
   },
   {
     name: 'gravar_aresta',
-    description: 'Cria uma relação entre dois nós existentes. Use nomes de entidades (não IDs). Se a aresta já existir, ignora (idempotente). Ambas as entidades devem existir — use gravar_entidade primeiro se necessário.',
+    description: 'Cria ou atualiza uma relação entre dois nós existentes. Use nomes de entidades (não IDs). Se a aresta já existir (mesma origem, tipo_relacao e destino), mescla os atributos novos com os existentes — mesmo comportamento de gravar_entidade. Ambas as entidades devem existir — use gravar_entidade primeiro se necessário.',
     inputSchema: {
       type: 'object',
       properties: {
         origem: { type: 'string', description: 'Nome da entidade de origem' },
-        tipo_relacao: { type: 'string', description: 'Tipo da relação em maiúsculas (ex: "GOSTEI", "GENERO", "AUTOR", "INDICADO_POR", "MORA_EM", "TRABALHA_EM")' },
-        destino: { type: 'string', description: 'Nome da entidade de destino' }
+        tipo_relacao: { type: 'string', description: 'Tipo da relação em maiúsculas (ex: "GOSTEI", "GENERO", "AUTOR", "INDICADO_POR", "MORA_EM", "TRABALHA_EM", "PARENTESCO", "AMIGO_DE")' },
+        destino: { type: 'string', description: 'Nome da entidade de destino' },
+        atributos: { type: 'object', description: 'Atributos livres da relação (ex: {"parentesco": "irmao"} ou {"desde": "2015", "contexto": "faculdade"} numa amizade)' }
       },
       required: ['origem', 'tipo_relacao', 'destino']
     }
@@ -206,7 +213,7 @@ async function toolGravarEntidade(DB, { nome, tipo, atributos = {} }) {
   return { acao: 'criado', id, nome, tipo, atributos };
 }
 
-async function toolGravarAresta(DB, { origem, tipo_relacao, destino }) {
+async function toolGravarAresta(DB, { origem, tipo_relacao, destino, atributos = {} }) {
   const nOrigem = await DB.prepare(
     'SELECT id FROM nodes WHERE nome = ?'
   ).bind(origem).first();
@@ -218,22 +225,36 @@ async function toolGravarAresta(DB, { origem, tipo_relacao, destino }) {
   if (!nDestino) throw new Error(`Entidade de destino não encontrada: "${destino}". Use gravar_entidade primeiro.`);
 
   const existing = await DB.prepare(
-    'SELECT id FROM edges WHERE origem = ? AND tipo_relacao = ? AND destino = ?'
+    'SELECT id, atributos FROM edges WHERE origem = ? AND tipo_relacao = ? AND destino = ?'
   ).bind(nOrigem.id, tipo_relacao, nDestino.id).first();
-  if (existing) return { acao: 'ja_existe', id: existing.id, origem, tipo_relacao, destino };
+
+  if (existing) {
+    const merged = { ...JSON.parse(existing.atributos || '{}'), ...atributos };
+    await DB.prepare(
+      "UPDATE edges SET atributos = ?, atualizado_em = datetime('now') WHERE id = ?"
+    ).bind(JSON.stringify(merged), existing.id).run();
+    return { acao: 'atualizado', id: existing.id, origem, tipo_relacao, destino, atributos: merged };
+  }
 
   const id = crypto.randomUUID();
   await DB.prepare(
-    'INSERT INTO edges (id, origem, tipo_relacao, destino) VALUES (?, ?, ?, ?)'
-  ).bind(id, nOrigem.id, tipo_relacao, nDestino.id).run();
-  return { acao: 'criado', id, origem, tipo_relacao, destino };
+    'INSERT INTO edges (id, origem, tipo_relacao, destino, atributos) VALUES (?, ?, ?, ?, ?)'
+  ).bind(id, nOrigem.id, tipo_relacao, nDestino.id, JSON.stringify(atributos)).run();
+  return { acao: 'criado', id, origem, tipo_relacao, destino, atributos };
 }
 
 function parseNodes(rows) {
   return rows.map(r => ({
     id: r.id, tipo: r.tipo, nome: r.nome,
     atributos: JSON.parse(r.atributos || '{}'),
-    ...(r.tipo_relacao ? { via: r.tipo_relacao } : {})
+    criado_em: r.criado_em,
+    atualizado_em: r.atualizado_em,
+    ...(r.tipo_relacao ? {
+      via: r.tipo_relacao,
+      via_atributos: JSON.parse(r.via_atributos || '{}'),
+      via_criado_em: r.via_criado_em,
+      via_atualizado_em: r.via_atualizado_em
+    } : {})
   }));
 }
 
@@ -249,7 +270,8 @@ async function toolConsultar(DB, { tipo, nome, via_relacao, origem, destino, lim
     if (tipo) binds.push(tipo);
     binds.push(lim);
     const rows = await DB.prepare(
-      `SELECT n.id, n.tipo, n.nome, n.atributos, e.tipo_relacao
+      `SELECT n.id, n.tipo, n.nome, n.atributos, n.criado_em, n.atualizado_em,
+              e.tipo_relacao, e.atributos AS via_atributos, e.criado_em AS via_criado_em, e.atualizado_em AS via_atualizado_em
        FROM edges e JOIN nodes n ON n.id = e.destino
        WHERE e.origem = ? AND e.tipo_relacao = ? ${tipoClause} LIMIT ?`
     ).bind(...binds).all();
@@ -265,7 +287,8 @@ async function toolConsultar(DB, { tipo, nome, via_relacao, origem, destino, lim
     if (tipo) binds.push(tipo);
     binds.push(lim);
     const rows = await DB.prepare(
-      `SELECT n.id, n.tipo, n.nome, n.atributos, e.tipo_relacao
+      `SELECT n.id, n.tipo, n.nome, n.atributos, n.criado_em, n.atualizado_em,
+              e.tipo_relacao, e.atributos AS via_atributos, e.criado_em AS via_criado_em, e.atualizado_em AS via_atualizado_em
        FROM edges e JOIN nodes n ON n.id = e.origem
        WHERE e.destino = ? AND e.tipo_relacao = ? ${tipoClause} LIMIT ?`
     ).bind(...binds).all();
@@ -280,7 +303,7 @@ async function toolConsultar(DB, { tipo, nome, via_relacao, origem, destino, lim
   const where = clauses.length ? `WHERE ${clauses.join(' AND ')}` : '';
   binds.push(lim);
   const rows = await DB.prepare(
-    `SELECT id, tipo, nome, atributos FROM nodes ${where} ORDER BY atualizado_em DESC LIMIT ?`
+    `SELECT id, tipo, nome, atributos, criado_em, atualizado_em FROM nodes ${where} ORDER BY atualizado_em DESC LIMIT ?`
   ).bind(...binds).all();
   return { nodes: parseNodes(rows.results), total: rows.results.length };
 }
