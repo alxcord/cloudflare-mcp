@@ -1,8 +1,47 @@
 # cloudflare-mcp
 
-Servidores MCP (Model Context Protocol) próprios, rodando em Cloudflare Workers, para dar ao
-Claude acesso de **leitura e escrita real** a serviços que o conector oficial do Claude não
-cobre ou só cobre em modo leitura.
+Uma coleção de servidores MCP (Model Context Protocol) simples para **uso pessoal**, rodando
+em Cloudflare Workers. O objetivo é dar ao Claude acesso de leitura e escrita real a serviços
+que o conector oficial do Claude não cobre, ou só cobre em modo leitura — sem precisar de
+servidor próprio, sem custo de infraestrutura e sem cartão de crédito.
+
+## Por que Cloudflare Workers
+
+A proposta desta coleção é que qualquer pessoa consiga rodar seus próprios MCPs de graça, sem
+manter nada localmente. Cloudflare Workers é a plataforma que torna isso viável:
+
+**Sem servidor dedicado.** Não precisa de um Raspberry Pi ligado em casa, de uma VPS paga, nem
+de um processo rodando em segundo plano no seu computador. Os Workers ficam na infraestrutura
+do Cloudflare, sempre disponíveis, independentemente de o seu computador estar ligado ou a sua
+internet doméstica estar estável.
+
+**Sem cartão de crédito.** A conta Cloudflare é gratuita e o cadastro não exige dados de
+pagamento. O Workers free tier cobre com folga qualquer uso pessoal:
+
+| Recurso | Limite gratuito |
+|---|---|
+| Cloudflare Workers | 100.000 requisições / dia |
+| Cloudflare D1 (banco SQLite) | 5 GB de storage · 5 M leituras / dia · 100 K escritas / dia |
+| Workers Builds (deploy automático) | Incluído, conectado ao GitHub |
+| Domínio customizado | Incluído se o domínio já estiver na Cloudflare |
+
+Para referência: um MCP pessoal dificilmente vai passar de algumas centenas de requisições por
+dia. Os limites acima são ordens de grandeza maiores do que o uso real.
+
+**Deploy automático pelo GitHub.** Cada Worker está conectado a uma subpasta deste repositório.
+Um `git push` na `main` já dispara o build e o deploy — sem CLI, sem painel manual, sem copiar
+e colar código. O fluxo de atualizar um Worker é: editar o `worker.js`, commitar, pronto.
+
+**HTTPS e SSL automáticos.** Qualquer Worker com domínio próprio ganha certificado SSL
+automaticamente, sem Let's Encrypt manual nem renovações para acompanhar.
+
+**Zero dependências de build.** Cada Worker é um arquivo JavaScript único, sem npm, sem
+bundler, sem etapa de compilação. O próprio runtime do Workers suporta tudo que é usado aqui
+(`fetch`, `crypto.subtle`, `TextEncoder`). Isso mantém o código auditável e o deploy simples.
+
+**Escalabilidade automática.** O Worker responde em múltiplas regiões simultaneamente, sem
+configuração. Para uso pessoal isso não importa muito, mas significa também que não há cold
+starts nem timeouts de inatividade como nos free tiers de plataformas como Railway ou Render.
 
 ## Por que isso existe
 
