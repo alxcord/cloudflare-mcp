@@ -10,10 +10,6 @@ sem build.
 - Código: [`worker.js`](./worker.js)
 - Config do Worker: [`wrangler.toml`](./wrangler.toml)
 
-> Este Worker nasceu com o segredo embutido na URL (`/<MCP_SECRET>/mcp`) e foi migrado para
-> OAuth depois, seguindo o mesmo padrão já validado no [`mcp-wger`](../wger). Ver
-> [Por que OAuth em vez de segredo na URL](#por-que-oauth-em-vez-de-segredo-na-url).
-
 ## Por que este Worker existe
 
 O conector oficial do GitHub no claude.ai é **só leitura** — o token OAuth que ele usa não tem
@@ -23,7 +19,7 @@ conector do zero. Não é uma questão de configuração.
 
 Custom connectors do claude.ai também não permitem enviar headers customizados, então não é
 possível simplesmente apontar para a API do GitHub com um Personal Access Token no header de
-Authorização. A solução é um Worker intermediário: ele armazena o PAT como secret do lado do
+Autorização. A solução é um Worker intermediário: ele armazena o PAT como secret do lado do
 servidor, expõe um endpoint MCP sem headers especiais, e por dentro autentica na API do GitHub
 usando o token real.
 
@@ -162,16 +158,6 @@ Rotas expostas pelo Worker:
 | `/authorize` | GET | Tela de aprovação — pede o `MCP_SECRET` e devolve o código |
 | `/token` | POST | Troca código + `code_verifier` por access token |
 | `/mcp` | POST | Endpoint MCP, exige `Authorization: Bearer <token>` |
-
-### Por que OAuth em vez de segredo na URL
-
-HTTPS já criptografa a requisição inteira (path incluído), então um segredo na URL não é visível
-na rede. O risco real é outro: URLs ficam gravadas em histórico de navegador, logs de acesso,
-header `Referer` e prints de tela. Um Bearer token no header não sofre esses vazamentos.
-
-O ganho prático: o `MCP_SECRET` deixa de ser transmitido em toda chamada, para sempre — ele é
-digitado uma única vez, na tela de aprovação, no momento de vincular o conector. Depois disso,
-o que trafega é um token de vida limitada (30 dias) que nunca aparece em uma URL.
 
 ### Sobre o PAT do GitHub
 
