@@ -24,9 +24,10 @@
 //   GET    /api/nodes              — lista/busca nós (?tipo=&nome=&limite=)
 //   POST   /api/nodes              — grava nó
 //   PATCH  /api/nodes/:id         — atualiza nó
-//   DELETE /api/nodes/:id         — remove nó + arestas ligadas
+//   DELETE /api/nodes/:id         — remove nó (+ arestas ligadas; ?remover_arestas=false bloqueia se houver arestas)
 //   POST   /api/edges              — grava aresta (cria ou mescla atributos se já existir)
-//   DELETE /api/edges/:id         — remove aresta
+//   DELETE /api/edges/:id         — remove aresta por ID
+//   DELETE /api/edges?origem=&tipo_relacao=&destino= — remove aresta por nomes
 //   GET    /api/query              — traversal (?origem=&via_relacao=&destino=&tipo=&limite=)
 //
 // Nós (nodes) e arestas (edges) têm atributos livres (JSON) e timestamps
@@ -179,14 +180,28 @@ const TOOLS = [
   },
   {
     name: 'remover_entidade',
-    description: 'Remove um nó do grafo pelo nome e tipo, junto com todas as arestas ligadas a ele (entrada e saída).',
+    description: 'Remove um nó do grafo pelo nome e tipo. Por padrão remove também todas as arestas ligadas a ele (entrada e saída). Se remover_arestas for false e existirem arestas ligadas, a remoção é bloqueada com erro em vez de apagar o nó e deixar arestas órfãs.',
     inputSchema: {
       type: 'object',
       properties: {
         nome: { type: 'string', description: 'Nome da entidade a remover' },
-        tipo: { type: 'string', description: 'Tipo da entidade (necessário para evitar ambiguidade entre entidades de mesmo nome)' }
+        tipo: { type: 'string', description: 'Tipo da entidade (necessário para evitar ambiguidade entre entidades de mesmo nome)' },
+        remover_arestas: { type: 'boolean', description: 'Se true (padrão), apaga junto todas as arestas ligadas ao nó. Se false, bloqueia a remoção quando existirem arestas ligadas.' }
       },
       required: ['nome', 'tipo']
+    }
+  },
+  {
+    name: 'remover_aresta',
+    description: 'Remove uma relação específica entre dois nós, identificada por origem, tipo_relacao e destino (não precisa saber o ID da aresta).',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        origem: { type: 'string', description: 'Nome da entidade de origem' },
+        tipo_relacao: { type: 'string', description: 'Tipo da relação (ex: "GOSTEI", "PARENTESCO")' },
+        destino: { type: 'string', description: 'Nome da entidade de destino' }
+      },
+      required: ['origem', 'tipo_relacao', 'destino']
     }
   }
 ];
@@ -308,11 +323,24 @@ async function toolConsultar(DB, { tipo, nome, via_relacao, origem, destino, lim
   return { nodes: parseNodes(rows.results), total: rows.results.length };
 }
 
-async function toolRemoverEntidade(DB, { nome, tipo }) {
+async function toolRemoverEntidade(DB, { nome, tipo, remover_arestas = true }) {
   const node = await DB.prepare(
     'SELECT id FROM nodes WHERE nome = ? AND tipo = ?'
   ).bind(nome, tipo).first();
   if (!node) throw new Error(`Entidade não encontrada: "${nome}" (tipo: ${tipo})`);
+
+  const countRow = await DB.prepare(
+    'SELECT COUNT(*) AS n FROM edges WHERE origem = ? OR destino = ?'
+  ).bind(node.id, node.id).first();
+  const arestasLigadas = countRow?.n ?? 0;
+
+  if (arestasLigadas > 0 && remover_arestas === false) {
+    throw new Error(
+      `Entidade "${nome}" (tipo: ${tipo}) tem ${arestasLigadas} aresta(s) ligada(s). ` +
+      `Remoção bloqueada porque remover_arestas=false. Remova as arestas primeiro (remover_aresta) ` +
+      `ou chame remover_entidade novamente com remover_arestas=true.`
+    );
+  }
 
   const edgesResult = await DB.prepare(
     'DELETE FROM edges WHERE origem = ? OR destino = ?'
@@ -325,12 +353,30 @@ async function toolRemoverEntidade(DB, { nome, tipo }) {
   };
 }
 
+async function toolRemoverAresta(DB, { origem, tipo_relacao, destino }) {
+  const nOrigem = await DB.prepare('SELECT id FROM nodes WHERE nome = ?').bind(origem).first();
+  if (!nOrigem) throw new Error(`Entidade de origem não encontrada: "${origem}".`);
+
+  const nDestino = await DB.prepare('SELECT id FROM nodes WHERE nome = ?').bind(destino).first();
+  if (!nDestino) throw new Error(`Entidade de destino não encontrada: "${destino}".`);
+
+  const edge = await DB.prepare(
+    'SELECT id FROM edges WHERE origem = ? AND tipo_relacao = ? AND destino = ?'
+  ).bind(nOrigem.id, tipo_relacao, nDestino.id).first();
+
+  if (!edge) return { acao: 'nao_encontrada', origem, tipo_relacao, destino };
+
+  await DB.prepare('DELETE FROM edges WHERE id = ?').bind(edge.id).run();
+  return { acao: 'removido', id: edge.id, origem, tipo_relacao, destino };
+}
+
 async function callTool(DB, name, args) {
   switch (name) {
     case 'gravar_entidade':  return toolGravarEntidade(DB, args);
     case 'gravar_aresta':    return toolGravarAresta(DB, args);
     case 'consultar':        return toolConsultar(DB, args);
     case 'remover_entidade': return toolRemoverEntidade(DB, args);
+    case 'remover_aresta':    return toolRemoverAresta(DB, args);
     default: throw new Error(`Ferramenta desconhecida: ${name}`);
   }
 }
@@ -419,8 +465,14 @@ async function handleApi(env, request, url) {
     const id = nodeMatch[1];
     const node = await env.DB.prepare('SELECT nome, tipo FROM nodes WHERE id = ?').bind(id).first();
     if (!node) return jsonResponse({ error: 'Nó não encontrado' }, 404);
-    const result = await toolRemoverEntidade(env.DB, { nome: node.nome, tipo: node.tipo });
-    return jsonResponse(result);
+    const removerArestasParam = url.searchParams.get('remover_arestas');
+    const remover_arestas = removerArestasParam === null ? true : removerArestasParam !== 'false';
+    try {
+      const result = await toolRemoverEntidade(env.DB, { nome: node.nome, tipo: node.tipo, remover_arestas });
+      return jsonResponse(result);
+    } catch (e) {
+      return jsonResponse({ error: e.message }, 409);
+    }
   }
 
   // POST /api/edges
@@ -431,6 +483,18 @@ async function handleApi(env, request, url) {
     }
     const result = await toolGravarAresta(env.DB, body);
     return jsonResponse(result, result.acao === 'criado' ? 201 : 200);
+  }
+
+  // DELETE /api/edges?origem=&tipo_relacao=&destino=
+  if (path === '/edges' && method === 'DELETE') {
+    const origem = url.searchParams.get('origem');
+    const tipo_relacao = url.searchParams.get('tipo_relacao');
+    const destino = url.searchParams.get('destino');
+    if (!origem || !tipo_relacao || !destino) {
+      return jsonResponse({ error: 'origem, tipo_relacao e destino são obrigatórios (query string)' }, 400);
+    }
+    const result = await toolRemoverAresta(env.DB, { origem, tipo_relacao, destino });
+    return jsonResponse(result, result.acao === 'removido' ? 200 : 404);
   }
 
   const edgeMatch = path.match(/^\/edges\/([^/]+)$/);
