@@ -24,7 +24,7 @@ Claude (custom connector)
 Cloudflare Worker (mcp-<servico>.<seu-dominio>)
    │  usa secret PAT/API key/D1 binding
    ▼
-API do serviço ou banco de dados (GitHub, Wger, D1, etc.)
+API do serviço ou banco de dados (GitHub, Wger, Habitica, D1, etc.)
 ```
 
 ## Estrutura do repositório
@@ -39,6 +39,10 @@ cloudflare-mcp/
 │   ├── wrangler.toml
 │   └── worker.js
 ├── wger/               ← MCP do Wger — ver wger/README.md
+│   ├── README.md
+│   ├── wrangler.toml
+│   └── worker.js
+├── habitica/           ← MCP do Habitica — ver habitica/README.md
 │   ├── README.md
 │   ├── wrangler.toml
 │   └── worker.js
@@ -62,6 +66,7 @@ Cada Worker está conectado a este repositório via **Cloudflare Workers Builds*
 |---|---|---|
 | [`git/`](./git) | `mcp-git` | Leitura e escrita em repositórios do GitHub — arquivos, branches, PRs, issues e Actions |
 | [`wger/`](./wger) | `mcp-wger` | Leitura e escrita na API do Wger (wger.de) — treino, peso e nutrição |
+| [`habitica/`](./habitica) | `mcp-habitica` | Leitura e escrita na API do Habitica (habitica.com) — hábitos, dailies, to-dos |
 | [`memoria/`](./memoria) | `mcp-memoria` | Grafo de memória pessoal persistido em Cloudflare D1 — ferramentas MCP e API REST |
 
 Detalhes de cada Worker, incluindo tabela de ferramentas e passo a passo de configuração, estão
