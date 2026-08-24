@@ -1,4 +1,4 @@
 name = "mcp-habitica"
 main = "worker.js"
 compatibility_date = "2026-08-22"
-# trigger Cloudflare Workers Build (primeiro deploy)
+# commit trivial para disparar o primeiro build/deploy no Cloudflare Workers Builds
