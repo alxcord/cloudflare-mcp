@@ -1,21 +1,22 @@
 # cloudflare-mcp
 
-Uma coleção de servidores MCP (Model Context Protocol) para uso pessoal, rodando em Cloudflare
-Workers. Cada Worker é uma ponte entre o Claude e um serviço externo — ele guarda as
-credenciais do lado do servidor e expõe um endpoint MCP que o Claude acessa via custom
-connector.
+Uma coleção de servidores MCP (Model Context Protocol) e Workers de apoio para uso pessoal,
+rodando em Cloudflare Workers. A maioria dos Workers é uma ponte entre o Claude e um serviço
+externo — ela guarda as credenciais do lado do servidor e expõe um endpoint MCP que o Claude
+acessa via custom connector. Alguns Workers (como o `comm`) não são MCPs — são peças de apoio
+da mesma infraestrutura pessoal, seguindo o mesmo padrão de deploy.
 
 ## Arquitetura
 
 - Cada serviço vira **um Worker separado**, com seu próprio subdomínio:
-  `mcp-<servico>.<seu-dominio>`.
+  `<worker>.<seu-dominio>`.
 - Cada Worker é **um arquivo único de JavaScript**, sem build step, sem dependências de npm.
   Só usa APIs nativas do runtime do Workers (`fetch`, `crypto.subtle`, `TextEncoder`).
-- Autenticação Claude → Worker é feita por **OAuth 2.1 com PKCE** (padrão adotado em todos os
-  Workers). As credenciais de acesso aos serviços externos ficam como **secrets do Worker no
+- Nos Workers que são MCPs, a autenticação Claude → Worker é feita por **OAuth 2.1 com PKCE**.
+  As credenciais de acesso aos serviços externos ficam como **secrets do Worker no
   Cloudflare** — nunca no código.
-- Cada Worker implementa o protocolo MCP (JSON-RPC 2.0 sobre HTTP) diretamente: `initialize`,
-  `tools/list` e `tools/call`. Sem SDK.
+- Cada Worker MCP implementa o protocolo MCP (JSON-RPC 2.0 sobre HTTP) diretamente:
+  `initialize`, `tools/list` e `tools/call`. Sem SDK.
 
 ```
 Claude (custom connector)
@@ -46,7 +47,11 @@ cloudflare-mcp/
 │   ├── README.md
 │   ├── wrangler.toml
 │   └── worker.js
-└── memoria/            ← MCP de memória em grafo (D1) — ver memoria/README.md
+├── memoria/            ← MCP de memória em grafo (D1) — ver memoria/README.md
+│   ├── README.md
+│   ├── wrangler.toml
+│   └── worker.js
+└── comm/               ← Hub de comunicação (Telegram + monitor de rede local) — ver comm/README.md
     ├── README.md
     ├── wrangler.toml
     └── worker.js
@@ -60,24 +65,28 @@ conectado a ela via **Build > Git repository**, com **Root directory** apontando
 Cada Worker está conectado a este repositório via **Cloudflare Workers Builds**. Um push na
 `main` dentro da subpasta do Worker dispara build e deploy automaticamente.
 
-## Servidores MCP neste repositório
+## Servidores neste repositório
 
-| Pasta | Worker | O que faz |
-|---|---|---|
-| [`git/`](./git) | `mcp-git` | Leitura e escrita em repositórios do GitHub — arquivos, branches, PRs, issues e Actions |
-| [`wger/`](./wger) | `mcp-wger` | Leitura e escrita na API do Wger (wger.de) — treino, peso e nutrição |
-| [`habitica/`](./habitica) | `mcp-habitica` | Leitura e escrita na API do Habitica (habitica.com) — hábitos, dailies, to-dos |
-| [`memoria/`](./memoria) | `mcp-memoria` | Grafo de memória pessoal persistido em Cloudflare D1 — ferramentas MCP e API REST |
+| Pasta | Worker | Tipo | O que faz |
+|---|---|---|---|
+| [`git/`](./git) | `mcp-git` | MCP | Leitura e escrita em repositórios do GitHub — arquivos, branches, PRs, issues e Actions |
+| [`wger/`](./wger) | `mcp-wger` | MCP | Leitura e escrita na API do Wger (wger.de) — treino, peso e nutrição |
+| [`habitica/`](./habitica) | `mcp-habitica` | MCP | Leitura e escrita na API do Habitica (habitica.com) — hábitos, dailies, to-dos |
+| [`memoria/`](./memoria) | `mcp-memoria` | MCP | Grafo de memória pessoal persistido em Cloudflare D1 — ferramentas MCP e API REST |
+| [`comm/`](./comm) | `comm` | Webhook | Hub de comunicação via Telegram, com monitor de rede local (dead man's switch) — não é um MCP |
 
-Detalhes de cada Worker, incluindo tabela de ferramentas e passo a passo de configuração, estão
-no `README.md` da respectiva pasta.
+Detalhes de cada Worker, incluindo tabela de ferramentas/rotas e passo a passo de configuração,
+estão no `README.md` da respectiva pasta.
 
 ## Segurança
 
 - PATs do GitHub são **fine-grained**, escopados ao mínimo necessário.
 - Secrets do Worker são sempre marcados como `Secret` (criptografado), nunca `Plaintext`.
-- Toda ferramenta exposta ao Claude fica configurada como **"Requer aprovação"** no conector —
-  nada executa sem confirmação explícita antes de cada chamada.
+- Toda ferramenta MCP exposta ao Claude fica configurada como **"Requer aprovação"** no
+  conector — nada executa sem confirmação explícita antes de cada chamada.
+- Workers que não são MCPs (como o `comm`) autenticam quem os chama por secret direto
+  (Bearer token ou secret de webhook), sem OAuth, por não haver um custom connector do Claude
+  envolvido.
 
 ## Por que Cloudflare Workers
 
@@ -94,6 +103,7 @@ O free tier cobre com folga qualquer uso pessoal:
 |---|---|
 | Cloudflare Workers | 100.000 requisições / dia |
 | Cloudflare D1 (banco SQLite) | 5 GB storage · 5 M leituras/dia · 100 K escritas/dia |
+| Cloudflare KV | 100.000 leituras/dia · 1.000 escritas/dia |
 | Workers Builds (deploy automático) | Incluído, conectado ao GitHub |
 | Domínio customizado | Incluído para domínios já gerenciados na Cloudflare |
 

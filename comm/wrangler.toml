@@ -1,0 +1,10 @@
+name = "comm"
+main = "worker.js"
+compatibility_date = "2026-08-22"
+
+[[kv_namespaces]]
+binding = "COMM_KV"
+id = "SUBSTITUIR_PELO_ID_DO_KV_NAMESPACE"
+
+[triggers]
+crons = ["*/10 * * * *"]
