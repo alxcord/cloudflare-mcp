@@ -67,13 +67,20 @@ Cada Worker está conectado a este repositório via **Cloudflare Workers Builds*
 
 ## Servidores neste repositório
 
-| Pasta | Worker | Tipo | O que faz |
-|---|---|---|---|
-| [`git/`](./git) | `mcp-git` | MCP | Leitura e escrita em repositórios do GitHub — arquivos, branches, PRs, issues e Actions |
-| [`wger/`](./wger) | `mcp-wger` | MCP | Leitura e escrita na API do Wger (wger.de) — treino, peso e nutrição |
-| [`habitica/`](./habitica) | `mcp-habitica` | MCP | Leitura e escrita na API do Habitica (habitica.com) — hábitos, dailies, to-dos |
-| [`memoria/`](./memoria) | `mcp-memoria` | MCP | Grafo de memória pessoal persistido em Cloudflare D1 — ferramentas MCP e API REST |
-| [`comm/`](./comm) | `comm` | Webhook | Hub de comunicação via Telegram, com monitor de rede local (dead man's switch) — não é um MCP |
+| Pasta | Worker | Tipo | Maturidade | O que faz |
+|---|---|---|---|---|
+| [`git/`](./git) | `mcp-git` | MCP | Estável | Leitura e escrita em repositórios do GitHub — arquivos, branches, PRs, issues e Actions |
+| [`wger/`](./wger) | `mcp-wger` | MCP | Estável | Leitura e escrita na API do Wger (wger.de) — treino, peso e nutrição |
+| [`habitica/`](./habitica) | `mcp-habitica` | MCP | Estável | Leitura e escrita na API do Habitica (habitica.com) — hábitos, dailies, to-dos |
+| [`memoria/`](./memoria) | `mcp-memoria` | MCP | Beta | Grafo de memória pessoal persistido em Cloudflare D1 — ferramentas MCP e API REST |
+| [`comm/`](./comm) | `comm` | Webhook | Em desenvolvimento | Hub de comunicação via Telegram, com monitor de rede local (dead man's switch) — não é um MCP |
+
+**Escala de maturidade:**
+
+- **Estável** — em uso pessoal contínuo, sem incidentes conhecidos.
+- **Beta** — funcional e em uso, mas com limitações conhecidas registradas no README da pasta.
+- **Em desenvolvimento** — funcionando, mas ainda evoluindo ativamente (rotas, comandos ou
+  recursos novos sendo adicionados).
 
 Detalhes de cada Worker, incluindo tabela de ferramentas/rotas e passo a passo de configuração,
 estão no `README.md` da respectiva pasta.
