@@ -1,4 +1,4 @@
-# cloudflare-mcp
+﻿# cloudflare-mcp
 
 Uma coleção de servidores MCP (Model Context Protocol) e Workers de apoio para uso pessoal,
 rodando em Cloudflare Workers. A maioria dos Workers é uma ponte entre o Claude e um serviço
@@ -27,6 +27,24 @@ Cloudflare Worker (mcp-<servico>.<seu-dominio>)
    ▼
 API do serviço ou banco de dados (GitHub, Wger, Habitica, D1, etc.)
 ```
+
+## Domínio para os Workers
+
+Cada Worker precisa de uma URL para responder. Existem duas opções, e este README usa
+`<seu-dominio>` como placeholder para as duas:
+
+1. **Subdomínio `*.workers.dev` (padrão, sem custo).** Toda conta Cloudflare recebe
+   automaticamente um subdomínio gratuito no formato `<worker>.<seu-usuario>.workers.dev`.
+   Não é preciso registrar nem configurar nada — basta nomear o Worker corretamente e a URL
+   já existe. Cobre perfeitamente o caso de uso pessoal descrito neste repositório.
+2. **Domínio próprio (opcional).** Se você já possui um domínio registrado em qualquer lugar,
+   pode adicioná-lo como zona na Cloudflare (trocando os nameservers no registrador) e apontar
+   subdomínios como `mcp-git.<seu-dominio>` para os Workers. O registro do domínio tem custo
+   próprio, fora do controle da Cloudflare — mas o uso dele dentro da Cloudflare (DNS, Workers)
+   continua no free tier.
+
+Ao longo deste README, `<seu-dominio>` pode ser substituído por `<seu-usuario>.workers.dev`
+(opção 1) ou por um domínio real (opção 2), conforme a escolha acima.
 
 ## Estrutura do repositório
 
