@@ -1,4 +1,7 @@
 name = "mcp-pushover"
 main = "worker.js"
 compatibility_date = "2026-09-18"
-# trigger Cloudflare Workers Build (primeiro deploy)
+
+[[routes]]
+pattern = "mcp-pushover.alexcordeiro.dev"
+custom_domain = true
