@@ -1,4 +1,4 @@
-﻿# cloudflare-mcp
+# cloudflare-mcp
 
 Uma coleção de servidores MCP (Model Context Protocol) e Workers de apoio para uso pessoal,
 rodando em Cloudflare Workers. A maioria dos Workers é uma ponte entre o Claude e um serviço
@@ -69,6 +69,10 @@ cloudflare-mcp/
 │   ├── README.md
 │   ├── wrangler.toml
 │   └── worker.js
+├── pushover/           ← MCP de notificações push (Pushover) — ver pushover/README.md
+│   ├── README.md
+│   ├── wrangler.toml
+│   └── worker.js
 └── comm/               ← Hub de comunicação (Telegram + monitor de rede local) — ver comm/README.md
     ├── README.md
     ├── wrangler.toml
@@ -91,6 +95,7 @@ Cada Worker está conectado a este repositório via **Cloudflare Workers Builds*
 | [`wger/`](./wger) | `mcp-wger` | MCP | Requer testes | Leitura e escrita na API do Wger (wger.de) — treino, peso e nutrição |
 | [`habitica/`](./habitica) | `mcp-habitica` | MCP | Estável | Leitura e escrita na API do Habitica (habitica.com) — hábitos, dailies, to-dos |
 | [`memoria/`](./memoria) | `mcp-memoria` | MCP | Estável | Grafo de memória pessoal persistido em Cloudflare D1 — ferramentas MCP e API REST |
+| [`pushover/`](./pushover) | `mcp-pushover` | MCP | Requer testes | Envio de notificações push para o celular via Pushover |
 | [`comm/`](./comm) | `comm` | Webhook | Em desenvolvimento | Hub de comunicação via Telegram, com monitor de rede local (dead man's switch) — não é um MCP |
 
 **Escala de maturidade:**
