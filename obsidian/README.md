@@ -95,9 +95,9 @@ Os secrets ficam só no Cloudflare e no GitHub, criptografados. Nunca no código
 
 ## Nota sobre o wrangler.toml
 
-O campo `database_id` em [`wrangler.toml`](./wrangler.toml) contém um placeholder
-(`SUBSTITUIR_PELO_ID_DO_BANCO`), como no `memoria/`. Substitua pelo ID real antes do primeiro
-deploy (passo 1 abaixo).
+O campo `database_id` em [`wrangler.toml`](./wrangler.toml) tem o ID real do banco D1. Ele não é
+uma credencial de acesso, e o Workers Builds precisa dele no arquivo para fazer o deploy.
+Para usar outra conta, crie o banco (passo 1 abaixo) e troque o valor.
 
 ## Passo a passo de configuração do zero
 
@@ -107,7 +107,7 @@ deploy (passo 1 abaixo).
 wrangler d1 create obsidian-index
 ```
 
-Copie o `database_id` retornado e substitua `SUBSTITUIR_PELO_ID_DO_BANCO` em
+Copie o `database_id` retornado e troque o valor em
 [`wrangler.toml`](./wrangler.toml).
 
 ### 2. Criar o Worker no Cloudflare e conectar a este repositório

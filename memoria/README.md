@@ -70,11 +70,9 @@ no código deste repositório.
 
 ## Nota sobre o wrangler.toml
 
-O campo `database_id` em [`wrangler.toml`](./wrangler.toml) contém um placeholder
-(`SUBSTITUIR_PELO_ID_DO_BANCO`). O ID real do banco D1 não é armazenado no repositório — é um
-identificador de infraestrutura específico de cada conta Cloudflare. Para configurar a sua
-própria instância, siga o passo 1 abaixo para obter o ID e substitua o placeholder antes do
-primeiro deploy.
+O campo `database_id` em [`wrangler.toml`](./wrangler.toml) tem o ID real do banco D1. Ele não é
+uma credencial de acesso (só funciona com o token da conta), e o Workers Builds precisa dele
+no arquivo para fazer o deploy. Para usar outra conta, siga o passo 1 abaixo e troque o valor.
 
 ## Passo a passo de configuração do zero
 
@@ -100,10 +98,8 @@ Copie o `database_id`.
 
 ### 2. Atualizar o wrangler.toml com o database_id real
 
-Substitua `SUBSTITUIR_PELO_ID_DO_BANCO` em [`wrangler.toml`](./wrangler.toml) pelo ID obtido
-acima e faça push (usando o `mcp-git` ou direto no repositório). Esse valor não é uma
-credencial de acesso — mas por convenção deste repo não é versionado, para que o repositório
-possa ser público sem expor detalhes de infraestrutura de nenhuma conta específica.
+Troque o `database_id` em [`wrangler.toml`](./wrangler.toml) pelo ID obtido acima e faça push
+(usando o `mcp-git` ou direto no repositório). Esse valor não é uma credencial de acesso.
 
 ### 3. Criar o Worker no Cloudflare
 
