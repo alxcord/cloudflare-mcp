@@ -1,0 +1,59 @@
+name: Indexar vaults Obsidian
+
+# Lê os vaults listados em obsidian/vaults.json e envia ao mcp-obsidian só as notas novas,
+# alteradas ou apagadas. Roda de hora em hora e também sob demanda.
+on:
+  schedule:
+    - cron: '17 * * * *'
+  workflow_dispatch:
+    inputs:
+      reindexar_tudo:
+        description: 'Reenviar todas as notas, ignorando o que já está indexado'
+        type: boolean
+        default: false
+
+concurrency:
+  group: obsidian-indexar
+  cancel-in-progress: false
+
+jobs:
+  vaults:
+    runs-on: ubuntu-latest
+    outputs:
+      lista: ${{ steps.ler.outputs.lista }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          sparse-checkout: obsidian
+      - id: ler
+        run: echo "lista=$(jq -c . obsidian/vaults.json)" >> "$GITHUB_OUTPUT"
+
+  indexar:
+    needs: vaults
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        vault: ${{ fromJSON(needs.vaults.outputs.lista) }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          sparse-checkout: obsidian
+
+      # Só os .md do vault, sem baixar imagens e anexos.
+      - uses: actions/checkout@v4
+        with:
+          repository: ${{ matrix.vault.repo }}
+          token: ${{ secrets.VAULTS_READ_TOKEN }}
+          path: vault
+          sparse-checkout: '*.md'
+          sparse-checkout-cone-mode: false
+          filter: blob:none
+
+      - name: Indexa as notas
+        env:
+          INDEX_ENDPOINT: https://mcp-obsidian.alexcordeiro.dev
+          INDEX_API_TOKEN: ${{ secrets.OBSIDIAN_API_TOKEN }}
+        run: |
+          python3 obsidian/indexador.py --vault "${{ matrix.vault.id }}" --root vault ${{ inputs.reindexar_tudo && '--force' || '' }}

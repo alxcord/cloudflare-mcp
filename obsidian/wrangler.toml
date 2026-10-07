@@ -1,0 +1,12 @@
+name = "mcp-obsidian"
+main = "worker.js"
+compatibility_date = "2026-10-01"
+
+[[d1_databases]]
+binding = "DB"
+database_name = "obsidian-index"
+database_id = "afc8e594-75c8-4c79-873e-e8e00d70d04c"
+
+[[routes]]
+pattern = "mcp-obsidian.alexcordeiro.dev"
+custom_domain = true
