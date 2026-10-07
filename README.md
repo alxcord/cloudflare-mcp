@@ -73,6 +73,12 @@ cloudflare-mcp/
 │   ├── README.md
 │   ├── wrangler.toml
 │   └── worker.js
+├── obsidian/           ← MCP de busca nos vaults Obsidian (D1 + FTS5) — ver obsidian/README.md
+│   ├── README.md
+│   ├── wrangler.toml
+│   ├── worker.js
+│   ├── indexador.py
+│   └── vaults.json
 └── comm/               ← Hub de comunicação (Telegram + monitor de rede local) — ver comm/README.md
     ├── README.md
     ├── wrangler.toml
@@ -96,6 +102,7 @@ Cada Worker está conectado a este repositório via **Cloudflare Workers Builds*
 | [`habitica/`](./habitica) | `mcp-habitica` | MCP | Estável | Leitura e escrita na API do Habitica (habitica.com) — hábitos, dailies, to-dos |
 | [`memoria/`](./memoria) | `mcp-memoria` | MCP | Estável | Grafo de memória pessoal persistido em Cloudflare D1 — ferramentas MCP e API REST |
 | [`pushover/`](./pushover) | `mcp-pushover` | MCP | Requer testes | Envio de notificações push para o celular via Pushover |
+| [`obsidian/`](./obsidian) | `mcp-obsidian` | MCP | Em desenvolvimento | Busca por texto e por tag nas notas dos vaults Obsidian, indexadas em Cloudflare D1 (FTS5) por um workflow do GitHub Actions |
 | [`comm/`](./comm) | `comm` | Webhook | Em desenvolvimento | Hub de comunicação via Telegram, com monitor de rede local (dead man's switch) — não é um MCP |
 
 **Escala de maturidade:**
