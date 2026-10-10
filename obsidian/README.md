@@ -117,6 +117,8 @@ Copie o `database_id` retornado e troque o valor em
 2. No Worker, vá em **Settings > Build > Git repository**, selecione `cloudflare-mcp` e defina o
    **Path** como `/obsidian`. O domínio `mcp-obsidian.<seu-dominio>` já está declarado no
    `wrangler.toml`.
+3. O painel não tem botão para o primeiro build. Ele só roda no próximo push na `main`, então
+   faça um commit qualquer em `obsidian/` depois de conectar o repositório.
 
 ### 3. Configurar os secrets do Worker
 
