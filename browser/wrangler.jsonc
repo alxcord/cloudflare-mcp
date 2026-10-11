@@ -1,0 +1,25 @@
+{
+  // Worker proxy do Playwright MCP. Secrets NAO ficam aqui: use "wrangler secret put".
+  "name": "mcp-browser",
+  "main": "worker.ts",
+  "compatibility_date": "2026-10-01",
+
+  // Somente o dominio proprio; sem URLs workers.dev nem de preview.
+  "workers_dev": false,
+  "preview_urls": false,
+  "routes": [{ "pattern": "mcp-browser.alexcordeiro.dev", "custom_domain": true }],
+
+  // URL do origin protegido pelo Access (nao e secret).
+  "vars": { "ORIGIN_URL": "https://browser.alexcordeiro.dev/mcp" },
+
+  // Teto de CPU por requisicao (ms). Exige plano Workers Paid; no Free, remova este bloco.
+  "limits": { "cpu_ms": 50 },
+
+  // Logs sem corpo nem headers: o codigo nao usa console.log e o log de invocacao fica desligado.
+  "observability": { "enabled": true, "logs": { "invocation_logs": false } },
+
+  // Rate limit por IP: 60 requisicoes por 60 s. O codigo ignora o binding se ele nao existir.
+  "ratelimits": [
+    { "name": "RATE_LIMITER", "namespace_id": "1001", "simple": { "limit": 60, "period": 60 } }
+  ]
+}

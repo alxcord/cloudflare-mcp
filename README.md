@@ -12,6 +12,7 @@ da mesma infraestrutura pessoal, seguindo o mesmo padrão de deploy.
   `<worker>.<seu-dominio>`.
 - Cada Worker é **um arquivo único de JavaScript**, sem build step, sem dependências de npm.
   Só usa APIs nativas do runtime do Workers (`fetch`, `crypto.subtle`, `TextEncoder`).
+  A exceção é o `browser/`, que é um único arquivo TypeScript (o Wrangler compila ao fazer o deploy).
 - Nos Workers que são MCPs, a autenticação Claude → Worker é feita por **OAuth 2.1 com PKCE**.
   As credenciais de acesso aos serviços externos ficam como **secrets do Worker no
   Cloudflare** — nunca no código.
@@ -79,6 +80,11 @@ cloudflare-mcp/
 │   ├── worker.js
 │   ├── indexador.py
 │   └── vaults.json
+├── browser/            ← Proxy MCP do Playwright atrás do Cloudflare Access — ver browser/README.md
+│   ├── README.md
+│   ├── wrangler.jsonc
+│   ├── worker.ts
+│   └── tests.sh
 └── comm/               ← Hub de comunicação (Telegram + monitor de rede local) — ver comm/README.md
     ├── README.md
     ├── wrangler.toml
@@ -103,6 +109,7 @@ Cada Worker está conectado a este repositório via **Cloudflare Workers Builds*
 | [`memoria/`](./memoria) | `mcp-memoria` | MCP | Estável | Grafo de memória pessoal persistido em Cloudflare D1 — ferramentas MCP e API REST |
 | [`pushover/`](./pushover) | `mcp-pushover` | MCP | Requer testes | Envio de notificações push para o celular via Pushover |
 | [`obsidian/`](./obsidian) | `mcp-obsidian` | MCP | Em desenvolvimento | Busca por texto e por tag nas notas dos vaults Obsidian, indexadas em Cloudflare D1 (FTS5) por um workflow do GitHub Actions |
+| [`browser/`](./browser) | `mcp-browser` | Proxy MCP | Em desenvolvimento | Proxy seguro na frente de um Playwright MCP protegido pelo Cloudflare Access, com OAuth e allowlists de caminho, método e headers |
 | [`comm/`](./comm) | `comm` | Webhook | Em desenvolvimento | Hub de comunicação via Telegram, com monitor de rede local (dead man's switch) — não é um MCP |
 
 **Escala de maturidade:**
