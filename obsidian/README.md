@@ -35,7 +35,7 @@ permite filtrar por tag de forma exata.
 
 | Método | Rota | O que faz |
 |---|---|---|
-| `POST` | `/api/init` | Cria as tabelas no D1 (rodar uma vez após o deploy) |
+| `POST` | `/api/init` | Cria as tabelas no D1. Opcional, porque o Worker já cria na primeira chamada |
 | `GET` | `/api/manifest` | Caminho → hash das notas já indexadas (`?vault=`) |
 | `POST` | `/api/ingest` | Grava um lote de notas (`{vault, notes: [...]}`) |
 | `POST` | `/api/delete` | Remove notas (`{vault, paths: [...]}`) |
@@ -71,6 +71,15 @@ Cada execução escreve no máximo 50 mil linhas no D1 (`--max-escritas`). O lim
 O workflow [`obsidian-indexar.yml`](../.github/workflows/obsidian-indexar.yml) roda de hora em
 hora e sob demanda (**Actions > Indexar vaults Obsidian > Run workflow**). Ele baixa só os `.md`
 de cada vault listado em [`vaults.json`](./vaults.json) e chama o indexador.
+
+Os commits no repositório do vault não disparam o workflow. Ele vive neste repositório e só
+reage ao cron e ao botão manual. Se o plugin Obsidian Git fizer dezenas de commits numa hora, a
+próxima execução encontra o vault no estado mais recente, compara com o que já está indexado e
+envia só as notas que mudaram. O custo em escritas no D1 acompanha o número de notas alteradas,
+não o de commits, e uma hora sem mudança não grava nada. Como este repositório é público, as
+execuções não consomem minutos do plano do GitHub Actions. O GitHub costuma atrasar e às vezes
+pular execuções agendadas de hora em hora, então na prática o índice atualiza algumas vezes por
+dia. Quando precisar dele atualizado na hora, use o botão manual.
 
 Para indexar outro vault, acrescente uma linha em `vaults.json`:
 
@@ -127,7 +136,11 @@ Em **Settings > Variables and Secrets**, adicione como **Secret**:
 - `MCP_SECRET`: string aleatória longa (senha da tela de aprovação e chave de assinatura dos tokens).
 - `API_TOKEN`: string aleatória longa, diferente do `MCP_SECRET` (token do indexador).
 
-### 4. Inicializar as tabelas (uma única vez)
+### 4. Inicializar as tabelas (opcional)
+
+O Worker cria as tabelas sozinho na primeira chamada à API, então a primeira indexação já
+resolve. A chamada abaixo serve para conferir, antes de configurar o GitHub, que o `API_TOKEN`
+está certo e que o Worker enxerga o banco:
 
 ```bash
 curl -X POST https://mcp-obsidian.<seu-dominio>/api/init \
@@ -156,7 +169,8 @@ hora em hora.
 2. **Nome**: `MCP Obsidian`.
 3. **URL do servidor MCP remoto**: `https://mcp-obsidian.<seu-dominio>/mcp`.
 4. Em **Configurações avançadas > ID do Cliente OAuth**, preencha um valor fixo (ex:
-   `claude-obsidian`). Deixe **Client Secret** vazio.
+   `claude-obsidian`). O Worker não valida esse ID, ele só vai dentro do token. Quem libera o
+   acesso é o `MCP_SECRET`. Deixe **Client Secret** vazio.
 5. Clique em **Adicionar** e depois em **Vincular**. Cole o `MCP_SECRET` na tela de aprovação.
 6. Confirme que todas as ferramentas ficam com **"Requer aprovação"**.
 
@@ -174,8 +188,8 @@ faz o deploy automaticamente. Mudanças nas regras de limpeza do `indexador.py` 
 
 ## Limitações conhecidas
 
-- O índice atualiza de hora em hora (cron do workflow). Para atualizar na hora, rode o workflow
-  manualmente.
+- O índice atualiza no máximo de hora em hora, e o GitHub pode atrasar ou pular execuções do
+  cron. Para atualizar na hora, rode o workflow manualmente.
 - A busca casa palavras por prefixo e exige todas. Não há busca por sinônimo ou por significado.
 - Notas são truncadas em 400 mil caracteres depois da limpeza. Imagens não são indexadas.
 - `ler_nota` devolve o texto limpo (sem imagens, com `[[links]]` reduzidos ao nome). Para o
