@@ -1,3 +1,4 @@
 [
-  { "id": "trabalho", "repo": "alxcord/obsidian-trabalho" }
+  { "id": "trabalho", "repo": "alxcord/obsidian-trabalho" },
+  { "id": "pessoal", "repo": "alxcord/obsidian-pessoal" }
 ]
