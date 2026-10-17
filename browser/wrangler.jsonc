@@ -12,9 +12,6 @@
   // URL do origin protegido pelo Access (nao e secret).
   "vars": { "ORIGIN_URL": "https://browser.alexcordeiro.dev/mcp" },
 
-  // Teto de CPU por requisicao (ms). Exige plano Workers Paid; no Free, remova este bloco.
-  "limits": { "cpu_ms": 50 },
-
   // Logs sem corpo nem headers: o codigo nao usa console.log e o log de invocacao fica desligado.
   "observability": { "enabled": true, "logs": { "invocation_logs": false } },
 
