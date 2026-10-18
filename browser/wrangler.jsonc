@@ -1,5 +1,6 @@
 {
-  // Worker proxy do Playwright MCP. Secrets NAO ficam aqui: use "wrangler secret put".
+  // Worker proxy do Playwright MCP. Secrets NAO ficam aqui: use "wrangler secret put"
+  // (MCP_SECRET, JWT_SECRET opcional, CF_ACCESS_CLIENT_ID, CF_ACCESS_CLIENT_SECRET).
   "name": "mcp-browser",
   "main": "worker.ts",
   "compatibility_date": "2026-10-01",
@@ -12,10 +13,12 @@
   // URL do origin protegido pelo Access (nao e secret).
   "vars": { "ORIGIN_URL": "https://browser.alexcordeiro.dev/mcp" },
 
-  // Logs sem corpo nem headers: o codigo nao usa console.log e o log de invocacao fica desligado.
-  "observability": { "enabled": true, "logs": { "invocation_logs": false } },
+  // Workers Logs ligado: o console.error do worker (falhas do upstream e de configuracao) aparece no
+  // dashboard. O log de invocacao fica desligado para nao gastar a cota diaria de eventos do plano Free.
+  "observability": { "enabled": true, "head_sampling_rate": 1, "logs": { "invocation_logs": false } },
 
-  // Rate limit por IP: 60 requisicoes por 60 s. O codigo ignora o binding se ele nao existir.
+  // Rate limit por IP: 60 chamadas por 60 s. Vale para /register, /authorize, /token e para
+  // tentativas de /mcp sem Bearer valido. O codigo ignora o binding se ele nao existir.
   "ratelimits": [
     { "name": "RATE_LIMITER", "namespace_id": "1001", "simple": { "limit": 60, "period": 60 } }
   ]
