@@ -3,7 +3,13 @@
 //
 // Secrets necessários (Settings > Variables and Secrets do Worker):
 //   MCP_SECRET  — chave de assinatura dos JWTs OAuth + senha da tela de aprovação
-//   API_TOKEN   — Bearer token estático para a API do indexador (/api/*)
+//   API_TOKEN   — Bearer token estático do indexador (escopo "admin": todas as rotas /api/*)
+//   SEARCH_TOKEN — Bearer token só de leitura (escopo "leitura": apenas GET /api/search).
+//                  Deve ser diferente de API_TOKEN e MCP_SECRET. Criar com:
+//                  wrangler secret put SEARCH_TOKEN
+//
+//   BLOCKED_FOLDERS — (opcional) prefixos de pasta, separados por vírgula, que /api/search nunca devolve.
+//                  Secret, para os nomes não irem ao repositório público. Se não existir, nada é bloqueado.
 //
 // D1 binding (wrangler.toml + Settings > Bindings do Worker):
 //   DB          — banco criado com: wrangler d1 create obsidian-index
@@ -19,11 +25,14 @@
 //   POST /token                                    — troca code por access_token
 //   POST /mcp                                      — endpoint MCP (Bearer JWT)
 //
-// Rotas REST (usadas pelo indexador, auth: Bearer <API_TOKEN>):
-//   POST /api/init                  — cria tabelas (idempotente, rodar uma vez)
-//   GET  /api/manifest?vault=       — caminho -> hash das notas já indexadas
-//   POST /api/ingest                — grava um lote de notas ({vault, notes: [...]})
-//   POST /api/delete                — remove notas ({vault, paths: [...]})
+// Rotas REST (auth: Bearer; o escopo exigido está entre parênteses):
+//   POST /api/init                  — cria tabelas (admin; idempotente, rodar uma vez)
+//   GET  /api/manifest?vault=       — caminho -> hash das notas já indexadas (admin)
+//   POST /api/ingest                — grava um lote de notas ({vault, notes: [...]}) (admin)
+//   POST /api/delete                — remove notas ({vault, paths: [...]}) (admin)
+//   POST /api/sync-status           — registra a execução do sync ({vault, commit_sha, commit_data}) (admin)
+//   GET  /api/search?q=&vault=&pasta=&limite= — só nomes de arquivos + datas de atualização (leitura ou admin)
+//   GET  /openapi.json              — descrição OpenAPI 3.1 de /api/search (pública, sem segredos)
 //
 // Todas as tabelas têm a coluna `vault`, então vários vaults convivem no mesmo banco.
 
@@ -41,6 +50,10 @@ const INIT_SQL = [
   `CREATE TABLE IF NOT EXISTS note_tags (
      vault TEXT NOT NULL, tag TEXT NOT NULL, path TEXT NOT NULL,
      PRIMARY KEY (vault, tag, path)) WITHOUT ROWID`,
+  // Última execução bem-sucedida do sync de cada vault (gravada pelo indexador).
+  `CREATE TABLE IF NOT EXISTS sync_status (
+     vault TEXT PRIMARY KEY, executado_em TEXT NOT NULL,
+     commit_sha TEXT NOT NULL DEFAULT '', commit_data TEXT NOT NULL DEFAULT '')`,
   `CREATE INDEX IF NOT EXISTS idx_note_tags_path ON note_tags (vault, path)`,
   `CREATE VIRTUAL TABLE IF NOT EXISTS notes_fts USING fts5(
      title, tags, body, tokenize = 'unicode61 remove_diacritics 2')`
@@ -111,27 +124,283 @@ function idVaultValido(vault) {
   return typeof vault === 'string' && /^[A-Za-z0-9_-]{1,40}$/.test(vault);
 }
 
-// ── API do indexador ─────────────────────────────────────────────────────────
-function exigeApiToken(env, request) {
-  const m = (request.headers.get('Authorization') || '').match(/^Bearer\s+(.+)$/i);
-  const enviado = m ? m[1] : '';
-  const esperado = env.API_TOKEN || '';
-  // Comparação em tempo constante.
+// ── Autenticação da API por escopo ───────────────────────────────────────────
+// admin: API_TOKEN (indexador), acessa todas as rotas.
+// leitura: SEARCH_TOKEN, acessa só /api/search.
+const ESCOPOS_ROTAS = {
+  '/init': 'admin',
+  '/manifest': 'admin',
+  '/ingest': 'admin',
+  '/delete': 'admin',
+  '/sync-status': 'admin',
+  '/search': 'leitura'
+};
+
+// Um segredo ausente ou em branco conta como não definido.
+function segredoDefinido(valor) {
+  return typeof valor === 'string' && valor.trim() !== '';
+}
+
+// Comparação em tempo constante. Segredo não definido nunca casa.
+function tokensIguais(enviado, esperado) {
+  if (!segredoDefinido(esperado)) return false;
   let diferenca = enviado.length ^ esperado.length;
   for (let i = 0; i < esperado.length; i++) {
     diferenca |= (enviado.charCodeAt(i) || 0) ^ esperado.charCodeAt(i);
   }
-  if (!esperado || diferenca !== 0) throw new Error('unauthorized');
+  return diferenca === 0;
 }
 
-async function handleApi(env, request, url) {
+// Devolve "admin", "leitura" ou null.
+function autenticar(env, request) {
+  const m = (request.headers.get('Authorization') || '').match(/^Bearer\s+(.+)$/i);
+  const enviado = m ? m[1] : '';
+  if (!enviado) return null;
+  const ehAdmin = tokensIguais(enviado, env.API_TOKEN);
+  // Se os dois secrets tiverem o mesmo valor, o SEARCH_TOKEN é ignorado.
+  const ehLeitura = env.SEARCH_TOKEN !== env.API_TOKEN && tokensIguais(enviado, env.SEARCH_TOKEN);
+  if (ehAdmin) return 'admin';
+  return ehLeitura ? 'leitura' : null;
+}
+
+function escopoSuficiente(escopo, exigido) {
+  return escopo === 'admin' || escopo === exigido;
+}
+
+// ── Busca só de nomes (GET /api/search) ──────────────────────────────────────
+function escapaLike(texto) {
+  return String(texto).replace(/[\\%_]/g, '\\$&');
+}
+
+// Lê BLOCKED_FOLDERS (prefixos separados por vírgula), sem barras nas pontas.
+// Ausente, vazia ou de tipo inesperado = nenhuma pasta bloqueada, sem erro.
+function pastasBloqueadas(env) {
+  const bruto = typeof env.BLOCKED_FOLDERS === 'string' ? env.BLOCKED_FOLDERS : '';
+  return bruto
+    .split(',')
+    .map(p => p.trim().replace(/^\/+|\/+$/g, ''))
+    .filter(Boolean);
+}
+
+async function buscarNomes(env, url) {
+  const fts = montaConsultaFts(url.searchParams.get('q') || '');
+  if (!fts) return jsonResponse({ error: 'parâmetro q é obrigatório' }, 400);
+  const vault = url.searchParams.get('vault') || '';
+  if (vault && !idVaultValido(vault)) return jsonResponse({ error: 'vault inválido' }, 400);
+  const pasta = (url.searchParams.get('pasta') || '').trim();
+  // Padrão 10, máximo 30. Valor ausente, zero ou negativo usa o padrão.
+  const pedido = parseInt(url.searchParams.get('limite'), 10);
+  const limite = pedido >= 1 ? Math.min(pedido, 30) : 10;
+
+  const bloqueadas = pastasBloqueadas(env);
+  const pastaBloqueada =
+    pasta !== '' && bloqueadas.some(p => pasta.toLowerCase().startsWith(p.toLowerCase()));
+
   try {
-    exigeApiToken(env, request);
-  } catch {
-    return jsonResponse({ error: 'unauthorized' }, 401);
+    // Mesma consulta de buscarNotas, mas sem snippet e sem ler o corpo.
+    const binds = [fts];
+    const filtros = filtrosComuns({ vault, pasta }, binds);
+    for (const prefixo of bloqueadas) {
+      filtros.push("n.folder NOT LIKE ? ESCAPE '\\'");
+      binds.push(escapaLike(prefixo) + '%');
+    }
+    binds.push(limite);
+    const busca = env.DB.prepare(
+      `SELECT n.vault, n.path, n.title
+       FROM notes_fts JOIN notes n ON n.rowid = notes_fts.rowid
+       WHERE notes_fts MATCH ? ${filtros.map(f => 'AND ' + f).join(' ')}
+       ORDER BY bm25(notes_fts, 8.0, 4.0, 1.0)
+       LIMIT ?`
+    ).bind(...binds);
+
+    // Datas de atualização do vault pedido (ou de todos).
+    const bindsVault = vault ? [vault] : [];
+    const filtroVault = vault ? 'WHERE vault = ?' : '';
+    const ultimas = env.DB.prepare(
+      `SELECT vault, MAX(indexed_at) AS ultima FROM notes ${filtroVault} GROUP BY vault`
+    ).bind(...bindsVault);
+    const syncs = env.DB.prepare(
+      `SELECT vault, executado_em, commit_sha, commit_data FROM sync_status ${filtroVault}`
+    ).bind(...bindsVault);
+
+    // Pasta bloqueada: não consulta, devolve vazio (a seção atualizacao continua).
+    const [rBusca, rUltimas, rSyncs] = await Promise.all([
+      pastaBloqueada ? { results: [] } : busca.all(),
+      ultimas.all(),
+      syncs.all()
+    ]);
+
+    const porVault = new Map();
+    const itemDoVault = v => {
+      if (!porVault.has(v)) {
+        porVault.set(v, {
+          vault: v,
+          ultima_execucao_sync: null,
+          commit_indexado: null,
+          ultima_nota_alterada: null
+        });
+      }
+      return porVault.get(v);
+    };
+    if (vault) itemDoVault(vault);
+    for (const r of rUltimas.results) itemDoVault(r.vault).ultima_nota_alterada = r.ultima;
+    for (const r of rSyncs.results) {
+      const item = itemDoVault(r.vault);
+      item.ultima_execucao_sync = r.executado_em;
+      item.commit_indexado = r.commit_sha
+        ? { sha: r.commit_sha.slice(0, 7), data: r.commit_data || null }
+        : null;
+    }
+
+    return jsonResponse({
+      atualizacao: [...porVault.values()].sort((a, b) => a.vault.localeCompare(b.vault)),
+      total: rBusca.results.length,
+      resultados: rBusca.results.map((r, i) => ({
+        posicao: i + 1,
+        vault: r.vault,
+        path: r.path,
+        title: r.title
+      }))
+    });
+  } catch (e) {
+    // Mensagem genérica: nada de SQL na resposta.
+    console.error('falha em /api/search:', e);
+    return jsonResponse({ error: 'erro interno' }, 500);
   }
-  await garantirEsquema(env.DB);
+}
+
+// ── Registro da execução do sync (POST /api/sync-status) ────────────────────
+async function registrarSync(env, request) {
+  const corpo = await request.json().catch(() => null);
+  if (!corpo || !idVaultValido(corpo.vault)) return jsonResponse({ error: 'corpo inválido' }, 400);
+  const sha = corpo.commit_sha === undefined ? '' : corpo.commit_sha;
+  const data = corpo.commit_data === undefined ? '' : corpo.commit_data;
+  if (typeof sha !== 'string' || !/^[0-9a-f]{0,64}$/i.test(sha)) {
+    return jsonResponse({ error: 'commit_sha inválido' }, 400);
+  }
+  if (typeof data !== 'string' || (data !== '' && Number.isNaN(Date.parse(data)))) {
+    return jsonResponse({ error: 'commit_data inválida' }, 400);
+  }
+  // Guarda a data do commit sempre em ISO UTC, para comparar com facilidade.
+  const dataIso = data ? new Date(data).toISOString() : '';
+  await env.DB.prepare(
+    `INSERT INTO sync_status (vault, executado_em, commit_sha, commit_data)
+     VALUES (?1, ?2, ?3, ?4)
+     ON CONFLICT (vault) DO UPDATE SET
+       executado_em = excluded.executado_em, commit_sha = excluded.commit_sha,
+       commit_data = excluded.commit_data`
+  )
+    .bind(corpo.vault, new Date().toISOString(), sha.toLowerCase(), dataIso)
+    .run();
+  return jsonResponse({ ok: true });
+}
+
+// ── OpenAPI 3.1 de /api/search (pública, sem segredos) ──────────────────────
+function montaOpenApi(origem) {
+  return {
+    openapi: '3.1.0',
+    info: {
+      title: 'Busca de notas Obsidian (só nomes)',
+      version: '1.0.0',
+      description:
+        'Busca nas notas indexadas dos vaults Obsidian. Devolve só nomes de arquivos (vault, caminho e título), ' +
+        'em ordem de relevância, e as datas de atualização do índice. Não devolve conteúdo, trechos nem tags.'
+    },
+    servers: [{ url: origem }],
+    paths: {
+      '/api/search': {
+        get: {
+          operationId: 'buscarNomesDeNotas',
+          summary: 'Busca notas e devolve só os nomes dos arquivos',
+          description:
+            'Palavras casam por prefixo e todas precisam aparecer; use aspas para frase exata. ' +
+            'A resposta sempre traz a seção atualizacao com as datas da última execução do sync e da última nota alterada.',
+          security: [{ bearerAuth: [] }],
+          parameters: [
+            { name: 'q', in: 'query', required: true, schema: { type: 'string' }, description: 'Texto a buscar, ex.: databricks unity' },
+            { name: 'vault', in: 'query', required: false, schema: { type: 'string' }, description: 'Id do vault. Omitido = todos' },
+            { name: 'pasta', in: 'query', required: false, schema: { type: 'string' }, description: 'Prefixo de pasta' },
+            { name: 'limite', in: 'query', required: false, schema: { type: 'integer', default: 10, minimum: 1, maximum: 30 }, description: 'Máximo de resultados (padrão 10, máximo 30)' }
+          ],
+          responses: {
+            200: {
+              description: 'Resultados em ordem de relevância e datas de atualização',
+              content: { 'application/json': { schema: { $ref: '#/components/schemas/RespostaBusca' } } }
+            },
+            400: { description: 'q vazio ou vault inválido' },
+            401: { description: 'Token ausente ou inválido' },
+            403: { description: 'Escopo insuficiente' },
+            405: { description: 'Método não permitido' },
+            500: { description: 'Erro interno' }
+          }
+        }
+      }
+    },
+    components: {
+      securitySchemes: { bearerAuth: { type: 'http', scheme: 'bearer' } },
+      schemas: {
+        RespostaBusca: {
+          type: 'object',
+          required: ['atualizacao', 'total', 'resultados'],
+          properties: {
+            atualizacao: {
+              type: 'array',
+              items: {
+                type: 'object',
+                properties: {
+                  vault: { type: 'string' },
+                  ultima_execucao_sync: { type: ['string', 'null'], format: 'date-time' },
+                  commit_indexado: {
+                    type: ['object', 'null'],
+                    properties: {
+                      sha: { type: 'string', description: 'Primeiros 7 caracteres do commit' },
+                      data: { type: ['string', 'null'], format: 'date-time' }
+                    }
+                  },
+                  ultima_nota_alterada: { type: ['string', 'null'], format: 'date-time' }
+                }
+              }
+            },
+            total: { type: 'integer' },
+            resultados: {
+              type: 'array',
+              items: {
+                type: 'object',
+                properties: {
+                  posicao: { type: 'integer' },
+                  vault: { type: 'string' },
+                  path: { type: 'string', description: 'Caminho do arquivo no repositório do vault' },
+                  title: { type: 'string' }
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  };
+}
+
+// ── API (indexador e busca) ──────────────────────────────────────────────────
+async function handleApi(env, request, url) {
+  const escopo = autenticar(env, request);
+  if (!escopo) return jsonResponse({ error: 'unauthorized' }, 401);
+
   const rota = url.pathname.replace(/^\/api/, '');
+  const exigido = ESCOPOS_ROTAS[rota];
+  if (!exigido) return jsonResponse({ error: 'rota não encontrada' }, 404);
+  if (!escopoSuficiente(escopo, exigido)) return jsonResponse({ error: 'forbidden' }, 403);
+
+  await garantirEsquema(env.DB);
+
+  if (rota === '/search') {
+    if (request.method !== 'GET') {
+      return jsonResponse({ error: 'método não permitido' }, 405, { Allow: 'GET' });
+    }
+    return buscarNomes(env, url);
+  }
+
+  if (rota === '/sync-status' && request.method === 'POST') return registrarSync(env, request);
 
   // POST /api/init: cria as tabelas (idempotente)
   if (rota === '/init' && request.method === 'POST') {
@@ -699,6 +968,11 @@ export default {
     }
     if (url.pathname === '/authorize' && request.method === 'GET') return handleAuthorize(env, url);
     if (url.pathname === '/token' && request.method === 'POST') return handleToken(env, request);
+
+    if (url.pathname === '/openapi.json') {
+      if (request.method !== 'GET') return jsonResponse({ error: 'método não permitido' }, 405, { Allow: 'GET' });
+      return jsonResponse(montaOpenApi(url.origin));
+    }
 
     if (url.pathname.startsWith('/api/')) {
       try {

@@ -2,6 +2,12 @@ name = "mcp-obsidian"
 main = "worker.js"
 compatibility_date = "2026-10-01"
 
+# BLOCKED_FOLDERS (prefixos de pasta separados por vírgula que GET /api/search nunca devolve)
+# é um secret, não uma var: este repositório é público e os nomes das pastas não devem aparecer aqui.
+# Não declare BLOCKED_FOLDERS em [vars] (var e secret com o mesmo nome entram em conflito).
+#   wrangler secret put BLOCKED_FOLDERS      # ex.: 99-Privado,02-Areas/Financas
+# Se o secret não existir, nenhuma pasta é bloqueada. Não afeta as ferramentas do /mcp.
+
 [[d1_databases]]
 binding = "DB"
 database_name = "obsidian-index"

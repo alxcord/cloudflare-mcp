@@ -21,6 +21,7 @@ import hashlib
 import json
 import os
 import re
+import subprocess
 import sys
 import time
 import unicodedata
@@ -230,6 +231,18 @@ def chama_worker(endpoint, token, metodo, rota, corpo=None):
             raise SystemExit(f"Falha de rede em {rota}: {e}")
 
 
+def commit_head(raiz):
+    """Devolve (sha, data ISO) do commit HEAD do vault, ou ('', '') se não for um repositório Git."""
+    try:
+        saida = subprocess.run(
+            ["git", "-C", raiz, "log", "-1", "--format=%H%n%cI"],
+            capture_output=True, text=True, check=True, timeout=30,
+        ).stdout.split()
+        return saida[0], saida[1]
+    except (OSError, subprocess.SubprocessError, IndexError):
+        return "", ""
+
+
 def monta_lotes(notas):
     """Agrupa notas em lotes limitados por quantidade e por tamanho em bytes."""
     lote, bytes_lote = [], 0
@@ -301,12 +314,14 @@ def main():
     # 3. Envia as alteradas, em lotes
     enviadas = 0
     escritas = 0
+    completo = True  # vira False se o orçamento de escrita interromper o envio
     for lote in monta_lotes(novas):
         # Trava de segurança: o limite diário de escrita do D1 vale para a conta toda.
         # Ao passar do orçamento, para aqui. A próxima execução continua de onde parou.
         if escritas >= args.max_escritas:
             print(f"Orçamento de {args.max_escritas} linhas escritas atingido. "
                   f"Faltam {len(novas) - enviadas} notas, que seguem na próxima execução.")
+            completo = False
             break
         resp = chama_worker(args.endpoint, args.token, "POST", "/api/ingest", {"vault": args.vault, "notes": lote})
         enviadas += len(lote)
@@ -317,6 +332,15 @@ def main():
     for i in range(0, len(apagadas), 100):
         chama_worker(args.endpoint, args.token, "POST", "/api/delete",
                      {"vault": args.vault, "paths": apagadas[i:i + 100]})
+
+    # 5. Registra a execução, mesmo sem nota alterada. Só chega aqui se nada falhou
+    #    (qualquer erro acima encerra o script antes). Se o orçamento cortou o envio,
+    #    o índice ainda não reflete o HEAD, então não registra.
+    if completo:
+        sha, data = commit_head(args.root)
+        chama_worker(args.endpoint, args.token, "POST", "/api/sync-status",
+                     {"vault": args.vault, "commit_sha": sha, "commit_data": data})
+        print(f"Execução registrada (commit {sha[:7] or 'desconhecido'}).")
     print("Concluído.")
 
 
