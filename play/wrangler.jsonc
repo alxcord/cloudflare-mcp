@@ -1,0 +1,22 @@
+{
+  // MCP do Google Play Console. Secrets NAO ficam aqui: use "wrangler secret put" ou o dashboard
+  // (MCP_SECRET, JWT_SECRET opcional, GOOGLE_SA_EMAIL, GOOGLE_SA_PRIVATE_KEY).
+  "name": "mcp-play",
+  "main": "src/worker.ts",
+  "compatibility_date": "2026-10-01",
+
+  // Somente o dominio proprio; sem URLs workers.dev nem de preview.
+  "workers_dev": false,
+  "preview_urls": false,
+  "routes": [{ "pattern": "mcp-play.alexcordeiro.dev", "custom_domain": true }],
+
+  // Workers Logs ligado so para o console.error do worker (falhas de configuracao). O log de
+  // invocacao fica desligado para nao gastar a cota diaria de eventos do plano Free.
+  "observability": { "enabled": true, "head_sampling_rate": 1, "logs": { "invocation_logs": false } },
+
+  // Rate limit por IP: 60 chamadas por 60 s em /register, /authorize, /token e em tentativas de
+  // /mcp sem Bearer valido. O codigo ignora o binding se ele nao existir.
+  "ratelimits": [
+    { "name": "RATE_LIMITER", "namespace_id": "1002", "simple": { "limit": 60, "period": 60 } }
+  ]
+}

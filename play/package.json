@@ -1,0 +1,10 @@
+{
+  "name": "mcp-play",
+  "private": true,
+  "type": "module",
+  "description": "MCP do Google Play Console em Cloudflare Workers",
+  "scripts": {
+    "test": "node --test test/*.test.ts",
+    "typecheck": "tsc --noEmit"
+  }
+}
