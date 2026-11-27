@@ -1,0 +1,29 @@
+name: play - testes
+
+# Roda os testes unitarios do mcp-play quando algo muda na pasta play/.
+on:
+  push:
+    branches: [main]
+    paths: ['play/**', '.github/workflows/play-testes.yml']
+  pull_request:
+    paths: ['play/**', '.github/workflows/play-testes.yml']
+
+permissions:
+  contents: read
+
+jobs:
+  testes:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    defaults:
+      run:
+        working-directory: play
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          sparse-checkout: play
+      # Node 22.18+ roda TypeScript direto (type stripping), sem instalar dependencias.
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - run: npm test
