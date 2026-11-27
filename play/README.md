@@ -84,7 +84,9 @@ para isso no MCP. Se a chave vazar, revogue-a no Google Cloud e gere outra.
 4. Crie o Worker `mcp-play` no Cloudflare e conecte este repositório em Workers Builds, com Root
    directory `play`.
 5. Cadastre os secrets (tabela abaixo). Apague o JSON local depois.
-6. Ajuste `routes` no `wrangler.jsonc` para o seu domínio e faça o push.
+6. Ajuste `routes` no `wrangler.jsonc` para o seu domínio e faça o push. O Workers Builds só
+   publica a partir de um push feito depois da conexão: se o código já estava na `main` antes de
+   conectar, faça um commit na pasta `play/` para disparar o primeiro build.
 
 ```bash
 cd play
