@@ -13,33 +13,48 @@ import { ValidationError } from './validate.ts';
 
 export interface ToolContext {
   api: PlayApi;
+  // Package names extras do secret PLAY_PACKAGES, ja validados. Somam-se aos de apps:search.
+  extraPackages?: string[];
 }
 
 type Args = Record<string, unknown>;
 
 // ---------- Cache da listagem de apps ----------
 
+type AppEntry = { nome: string; package_name: string; origem: 'play_console' | 'PLAY_PACKAGES' };
+
 const APPS_TTL_MS = 10 * 60 * 1000;
-let appsCache: { at: number; apps: { nome: string; package_name: string }[] } | null = null;
+let appsCache: { at: number; apps: AppEntry[] } | null = null;
 
 // Usado pelos testes para comecar cada caso com o cache vazio.
 export function resetAppsCache(): void {
   appsCache = null;
 }
 
-async function fetchApps(ctx: ToolContext): Promise<{ nome: string; package_name: string }[]> {
-  const apps: { nome: string; package_name: string }[] = [];
-  let pageToken: string | undefined;
-  // No maximo 5 paginas de 1000 apps: limite de seguranca contra laco infinito.
-  for (let page = 0; page < 5; page++) {
-    const data = await ctx.api.call<{ apps?: { packageName?: string; displayName?: string }[]; nextPageToken?: string }>(
-      requests.searchApps(pageToken),
-    );
-    for (const a of data.apps ?? []) {
-      if (typeof a.packageName === 'string') apps.push({ nome: a.displayName ?? '', package_name: a.packageName });
+// Junta os apps da Reporting API (apps:search) com os do secret PLAY_PACKAGES. O apps:search pode
+// voltar vazio para apps sem dados de relatorio (ex.: so em teste), por isso a lista extra.
+async function fetchApps(ctx: ToolContext): Promise<AppEntry[]> {
+  const extras = ctx.extraPackages ?? [];
+  const apps: AppEntry[] = [];
+  try {
+    let pageToken: string | undefined;
+    // No maximo 5 paginas de 1000 apps: limite de seguranca contra laco infinito.
+    for (let page = 0; page < 5; page++) {
+      const data = await ctx.api.call<{ apps?: { packageName?: string; displayName?: string }[]; nextPageToken?: string }>(
+        requests.searchApps(pageToken),
+      );
+      for (const a of data.apps ?? []) {
+        if (typeof a.packageName === 'string') apps.push({ nome: a.displayName ?? '', package_name: a.packageName, origem: 'play_console' });
+      }
+      if (!data.nextPageToken) break;
+      pageToken = data.nextPageToken;
     }
-    if (!data.nextPageToken) break;
-    pageToken = data.nextPageToken;
+  } catch (e) {
+    // Sem lista extra, a falha do apps:search e o erro. Com ela, seguimos so com os extras.
+    if (extras.length === 0) throw e;
+  }
+  for (const pkg of extras) {
+    if (!apps.some((a) => a.package_name === pkg)) apps.push({ nome: '', package_name: pkg, origem: 'PLAY_PACKAGES' });
   }
   appsCache = { at: Date.now(), apps };
   return apps;
@@ -56,7 +71,7 @@ async function requireApp(ctx: ToolContext, value: unknown): Promise<string> {
   const pkg = v.packageName(value);
   if ((await listApps(ctx)).some((a) => a.package_name === pkg)) return pkg;
   if ((await listApps(ctx, true)).some((a) => a.package_name === pkg)) return pkg;
-  throw new ValidationError(`O app ${pkg} nao aparece entre os apps a que a conta de servico tem acesso. Use listar_apps para ver os disponiveis.`);
+  throw new ValidationError(`O app ${pkg} nao aparece entre os apps da conta de servico nem no secret PLAY_PACKAGES. Use listar_apps para ver os disponiveis.`);
 }
 
 // ---------- Erros ----------
@@ -201,7 +216,9 @@ const TIPO = { type: 'string', enum: ['unico', 'assinatura'], description: 'unic
 export const TOOLS = [
   {
     name: 'listar_apps',
-    description: 'Lista os apps (nome e package name) a que a conta de servico tem acesso no Play Console. Usa a Google Play Developer Reporting API.',
+    description:
+      'Lista os apps aceitos pelo MCP: os que a Google Play Developer Reporting API devolve para a conta de servico (origem play_console) ' +
+      'e os do secret PLAY_PACKAGES (origem PLAY_PACKAGES). O acesso real a cada app continua sendo checado pelo Google em cada chamada.',
     inputSchema: { type: 'object', properties: {}, additionalProperties: false },
     annotations: { readOnlyHint: true },
   },

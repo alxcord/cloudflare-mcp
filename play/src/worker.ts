@@ -10,6 +10,8 @@
 //                          Se nao existir, usa o MCP_SECRET.
 //   GOOGLE_SA_EMAIL        client_email do JSON da conta de servico
 //   GOOGLE_SA_PRIVATE_KEY  private_key do JSON da conta de servico (PEM PKCS#8)
+//   PLAY_PACKAGES          OPCIONAL. Package names aceitos alem dos que a Reporting API devolve,
+//                          separados por virgula. Cadastre como Secret para nao sumir no deploy.
 //
 // Rotas:
 //   GET  /.well-known/oauth-authorization-server        metadata do servidor de autorizacao
@@ -37,6 +39,7 @@ export interface Env {
   JWT_SECRET?: string;
   GOOGLE_SA_EMAIL: string;
   GOOGLE_SA_PRIVATE_KEY: string;
+  PLAY_PACKAGES?: string; // opcional: package names extras, separados por virgula
   RATE_LIMITER?: RateLimit; // opcional: sem o binding, o rate limit e ignorado
 }
 
@@ -567,7 +570,7 @@ async function handleMcp(request: Request, env: Env, issuer: string): Promise<Re
     return json({ jsonrpc: '2.0', id: null, error: { code: -32700, message: 'Parse error' } }, 400);
   }
 
-  const reply = await handleMcpMessage(message, { googleEmail: env.GOOGLE_SA_EMAIL, googleKey: env.GOOGLE_SA_PRIVATE_KEY, missing: googleConfigProblems(env) });
+  const reply = await handleMcpMessage(message, { googleEmail: env.GOOGLE_SA_EMAIL, googleKey: env.GOOGLE_SA_PRIVATE_KEY, missing: googleConfigProblems(env), playPackages: env.PLAY_PACKAGES });
   // Notificacoes nao tem resposta: 202 sem corpo.
   if (reply === null) return new Response(null, { status: 202 });
   return json(reply);

@@ -24,6 +24,22 @@ export function packageName(value: unknown): string {
   return v;
 }
 
+// Lista de package names do secret PLAY_PACKAGES, separados por virgula ou espaco.
+// Itens invalidos sao ignorados (o valor nao vai para log nem para mensagem).
+export function packageList(value: unknown): string[] {
+  if (typeof value !== 'string' || !value.trim()) return [];
+  const valid: string[] = [];
+  for (const item of value.split(/[\s,]+/)) {
+    try {
+      const pkg = packageName(item);
+      if (!valid.includes(pkg)) valid.push(pkg);
+    } catch {
+      // item invalido: ignorado
+    }
+  }
+  return valid.slice(0, 100);
+}
+
 // E-mail simples (usuario@dominio.tld). Usado para grupos de testadores.
 const EMAIL_RE = /^[A-Za-z0-9._%+-]{1,64}@[A-Za-z0-9-]+(\.[A-Za-z0-9-]+)*\.[A-Za-z]{2,63}$/;
 
