@@ -15,8 +15,11 @@ claude.ai ──OAuth Bearer──▶ mcp-play.<seu-dominio>/mcp
 ## Ferramentas
 
 Todas, exceto `listar_apps`, recebem `package_name`. O app só é aceito se o formato for válido e
-se ele aparecer na listagem da conta de serviço (cache de 10 minutos, recarregado uma vez quando o
-app não é encontrado).
+se ele aparecer na listagem da conta de serviço (Reporting API `apps:search`) ou no secret opcional
+`PLAY_PACKAGES`. A lista fica em cache por 10 minutos e é recarregada uma vez quando o app não é
+encontrado. O `apps:search` pode voltar vazio para apps sem dados de relatório, como apps só em
+teste. Nesse caso, liste os package names em `PLAY_PACKAGES`. O Google checa a permissão da conta
+de serviço em cada chamada, inclusive para esses apps.
 
 | Ferramenta | O que faz | Escreve |
 |---|---|---|
@@ -106,6 +109,10 @@ Todos são do tipo Secret, nunca em código, vars ou README.
 | `JWT_SECRET` | Opcional. Chave HMAC dos tokens OAuth (mínimo 32 caracteres). Sem ele, o `MCP_SECRET` assina |
 | `GOOGLE_SA_EMAIL` | `client_email` do JSON da conta de serviço |
 | `GOOGLE_SA_PRIVATE_KEY` | `private_key` do JSON (PEM PKCS#8). Aceita `\n` literal ou quebras de linha reais |
+| `PLAY_PACKAGES` | Opcional. Package names aceitos além dos que o `apps:search` devolve, separados por vírgula, ex.: `com.exemplo.app,dev.exemplo.outro` |
+
+Cadastre todos como Secret. Variáveis de texto criadas no dashboard são apagadas no próximo deploy
+do Workers Builds, porque o `wrangler.jsonc` não as declara.
 
 ## OAuth e proteções
 

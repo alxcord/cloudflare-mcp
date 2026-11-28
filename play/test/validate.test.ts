@@ -17,6 +17,14 @@ describe('packageName', () => {
   });
 });
 
+describe('packageList', () => {
+  it('separa por virgula ou espaco, remove duplicados e ignora invalidos', () => {
+    assert.deepEqual(v.packageList(' com.a.b, dev.c.d\ncom.a.b, com/x, '), ['com.a.b', 'dev.c.d']);
+    assert.deepEqual(v.packageList(undefined), []);
+    assert.deepEqual(v.packageList(''), []);
+  });
+});
+
 describe('email e emailList', () => {
   it('normaliza para minusculas e remove duplicados', () => {
     assert.deepEqual(v.emailList(['Testers@GoogleGroups.com', 'testers@googlegroups.com'], 'adicionar'), ['testers@googlegroups.com']);

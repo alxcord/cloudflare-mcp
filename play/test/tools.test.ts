@@ -16,8 +16,8 @@ function google(): MockGoogle {
     .on('DELETE', /\/edits\/edit1$/, { status: 204 });
 }
 
-async function run(g: MockGoogle, name: string, args: Record<string, unknown>) {
-  const res = await callTool({ api: new PlayApi(async () => 'token-teste', g.fetch) }, name, args);
+async function run(g: MockGoogle, name: string, args: Record<string, unknown>, extraPackages?: string[]) {
+  const res = await callTool({ api: new PlayApi(async () => 'token-teste', g.fetch), extraPackages }, name, args);
   const text = res.content[0].text;
   return { isError: Boolean(res.isError), text, data: res.isError ? undefined : JSON.parse(text) };
 }
@@ -29,7 +29,31 @@ beforeEach(() => resetAppsCache());
 describe('apps e package name', () => {
   it('listar_apps devolve nome e package name', async () => {
     const { data } = await run(google(), 'listar_apps', {});
-    assert.deepEqual(data, { total: 1, apps: [{ nome: 'Exemplo', package_name: PKG }] });
+    assert.deepEqual(data, { total: 1, apps: [{ nome: 'Exemplo', package_name: PKG, origem: 'play_console' }] });
+  });
+
+  it('soma os apps do PLAY_PACKAGES sem duplicar', async () => {
+    const { data } = await run(google(), 'listar_apps', {}, [PKG, 'com.extra.app']);
+    assert.deepEqual(data.apps, [
+      { nome: 'Exemplo', package_name: PKG, origem: 'play_console' },
+      { nome: '', package_name: 'com.extra.app', origem: 'PLAY_PACKAGES' },
+    ]);
+  });
+
+  it('com apps:search vazio, aceita o app do PLAY_PACKAGES', async () => {
+    const g = new MockGoogle()
+      .on('GET', /apps:search/, { body: {} })
+      .on('GET', /\/reviews\?/, { body: { reviews: [] } });
+    const r = await run(g, 'listar_avaliacoes', { package_name: 'com.extra.app' }, ['com.extra.app']);
+    assert.equal(r.isError, false);
+  });
+
+  it('com apps:search falhando, segue so com o PLAY_PACKAGES', async () => {
+    const g = new MockGoogle().on('GET', /apps:search/, { status: 403, body: { error: { message: 'denied' } } });
+    const { data } = await run(g, 'listar_apps', {}, ['com.extra.app']);
+    assert.deepEqual(data.apps, [{ nome: '', package_name: 'com.extra.app', origem: 'PLAY_PACKAGES' }]);
+    const semExtras = await run(g, 'listar_apps', {});
+    assert.equal(semExtras.isError, true);
   });
 
   it('recusa app fora da conta sem chamar a API do app', async () => {

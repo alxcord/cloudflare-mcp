@@ -3,6 +3,7 @@
 import { type FetchFn, GoogleTokenProvider } from './google-auth.ts';
 import { PlayApi } from './play-api.ts';
 import { callTool, TOOLS } from './tools.ts';
+import { packageList } from './validate.ts';
 
 const SERVER_INFO = { name: 'mcp-play', version: '1.0.0' };
 // Versoes do protocolo aceitas. Se o cliente pedir outra, respondemos a mais recente.
@@ -12,6 +13,7 @@ export interface GoogleConfig {
   googleEmail: string;
   googleKey: string;
   missing: string[]; // nomes dos secrets do Google que faltam
+  playPackages?: string; // valor do secret opcional PLAY_PACKAGES
 }
 
 // Um provedor de token por isolate: o access token fica em cache entre requisicoes.
@@ -63,7 +65,7 @@ export async function handleMcpMessage(message: unknown, cfg: GoogleConfig, fetc
       }
       const sa = { email: cfg.googleEmail, privateKeyPem: cfg.googleKey };
       const api = new PlayApi(() => tokens.getToken(sa), fetchFn);
-      return result(msg.id, await callTool({ api }, name, args ?? {}));
+      return result(msg.id, await callTool({ api, extraPackages: packageList(cfg.playPackages) }, name, args ?? {}));
     }
     default:
       return error(msg.id, -32601, `Method not found: ${msg.method.slice(0, 60)}`);
